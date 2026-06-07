@@ -1,0 +1,6 @@
+session=xfce
+geometry=1280x800
+localhost=yes
+SecurityTypes=None
+ZlibLevel=1
+AlwaysShared=1
