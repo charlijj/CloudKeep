@@ -6,6 +6,60 @@ redeploying the previous file.
 
 ---
 
+## 0. Capture the baseline FIRST (Phase 0)
+
+The bridge now logs a per-session summary on close (bytes, throughput, frame
+count, average bytes/frame). To get a clean *before* number, deploy **only**
+the instrumented bridge and run the gateway the **old** way — i.e. do **not**
+yet apply the Phase 1 (xstartup) or Phase 2 (app.js / run.py) changes.
+
+```bash
+# On the KVM VM: deploy only the instrumented bridge, keep everything else as-is
+# (old ~/.vnc/xstartup, old app.js on the edge, old start command below).
+
+# Start the gateway the existing way (NOT run.py — that would add uvloop/deflate):
+cd backend/src
+uvicorn auth:app --host 10.10.10.2 --port 8000
+```
+
+Run one **representative session** with a fixed protocol so before/after are
+comparable, e.g.: 30s idle desktop → 30s typing in a terminal → 30s dragging a
+window → 30s scrolling a web page → 30s of video/motion. Then disconnect.
+
+Read the summary line the bridge logs on disconnect:
+
+```bash
+# If started in a terminal, it's on stdout. Under systemd:
+journalctl -u cloudkeep -n 50 --no-pager | grep "bridge closed"
+```
+
+Example line:
+
+```
+bridge closed (152.3s) down=812.4KB/s up=1.2KB/s s2c=126500000B c2s=190000B frames=4100 avg_frame=30854B
+```
+
+How to read it:
+
+- **`down` (KB/s)** near your link's usable bandwidth → **bytes-bound**: the
+  Phase 1/2 encoding changes will help most.
+- **`down` low but the session still felt laggy** → likely **RTT-bound**:
+  measure ping (below) before expecting encoding changes to help.
+- **`avg_frame`** shrinking after Phase 1/2 is the direct proof the desktop +
+  Tight/quality changes are cutting bytes.
+
+Pair it with an RTT reading (the structural floor):
+
+```bash
+ping -c 20 cloudkeep.duckdns.org     # client -> edge (run from a client machine)
+ping -c 20 10.10.10.2                # from EC2: edge -> VM over WireGuard (the hairpin)
+```
+
+Record both the bridge summary and the two ping averages. Then apply Phase 1 +
+2 (sections below) and re-run the **same** protocol to compare.
+
+---
+
 ## 1. KVM VM — desktop session (Phase 1)
 
 Applies the new `sys/vnc/xstartup` (compositing off, outline move/resize) and,
