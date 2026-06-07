@@ -1,0 +1,192 @@
+# CloudKeep — landing page + gateway (HTTP-only, hardened)
+
+# --- Default catch-all: drop any request not for cloudkeep.duckdns.org ---
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+    return 444;
+}
+
+# --- Main site ---
+server {
+
+    server_name cloudkeep.duckdns.org;
+
+    root  /var/www/html/cloudkeep;
+    index index.html;
+
+    access_log /var/log/nginx/cloudkeep.access.log;
+    error_log  /var/log/nginx/cloudkeep.error.log warn;
+
+    # --- Request shape limits ---
+    client_max_body_size        1k;
+    client_body_buffer_size     1k;
+    client_header_buffer_size   1k;
+    large_client_header_buffers 2 1k;
+
+    # --- Timeouts (slow-loris / slow-POST defense) ---
+    client_body_timeout    10s;
+    client_header_timeout  10s;
+    keepalive_timeout      15s;
+    send_timeout           10s;
+
+    # --- Rate & connection limiting ---
+    limit_req  zone=cloudkeep_req  burst=20 nodelay;
+    limit_conn cloudkeep_conn 10;
+
+    # --- Restrict HTTP methods ---
+    if ($request_method !~ ^(GET|HEAD|POST|OPTIONS)$) {
+        return 405;
+    }
+
+    # --- Security headers (site-wide baseline) ---
+    add_header X-Frame-Options              "DENY"             always;
+    add_header X-Content-Type-Options       "nosniff"          always;
+    add_header Referrer-Policy              "no-referrer"      always;
+    add_header Permissions-Policy           "geolocation=(), microphone=(), camera=(), payment=(), usb=(), interest-cohort=()" always;
+    add_header Cross-Origin-Opener-Policy   "same-origin"      always;
+    add_header Cross-Origin-Resource-Policy "same-origin"      always;
+    add_header Content-Security-Policy      "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'none'; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+
+    # --- Block hidden files (but allow ACME for future TLS) ---
+    location ~ /\.(?!well-known) {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+
+    # --- Block common probe paths and sensitive extensions ---
+    location ~* \.(env|git|sql|bak|swp|log|ini|conf|yml|yaml)$ { deny all; }
+    location ~* /(wp-|xmlrpc\.php|administrator/|admin\.php|phpmyadmin|\.aws|\.ssh) { deny all; }
+
+    autoindex off;
+
+    # ================================================================
+    # Existing app (port 3001) — paths unchanged
+    # ================================================================
+
+    location /ws {
+        proxy_pass http://10.10.10.2:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host       $host;
+        proxy_set_header X-Real-IP  $remote_addr;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    location /internal/status {
+        proxy_pass http://10.10.10.2:3001/status;
+        proxy_http_version 1.1;
+        proxy_set_header Host       $host;
+        proxy_set_header X-Real-IP  $remote_addr;
+    }
+
+    location /ws-health {
+        proxy_pass http://10.10.10.2:3001/health;
+        proxy_http_version 1.1;
+    }
+
+    # ================================================================
+    # CloudKeep gateway (port 8000) — all paths prefixed /ck/
+    # ================================================================
+
+    # Auth API — inherits site-wide security headers (no add_header here).
+    location /ck/auth/ {
+        proxy_pass http://10.10.10.2:8000/auth/;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # VNC WebSocket bridge.
+    location /ck/ws {
+        proxy_pass http://10.10.10.2:8000/ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host       $host;
+        proxy_set_header X-Real-IP  $remote_addr;
+        proxy_buffering    off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    # Gateway SPA.
+    # ^~ beats the regex .html cache block so /app/ gets THIS CSP, not 'script-src none'.
+    # Because this location sets add_header, NGINX won't inherit parent headers — repeat them all.
+    location ^~ /app/ {
+        add_header X-Frame-Options              "DENY"        always;
+        add_header X-Content-Type-Options       "nosniff"     always;
+        add_header Referrer-Policy              "no-referrer" always;
+        add_header Permissions-Policy           "geolocation=(), microphone=(), camera=(), payment=(), usb=(), interest-cohort=()" always;
+        add_header Cross-Origin-Opener-Policy   "same-origin" always;
+        add_header Cross-Origin-Resource-Policy "same-origin" always;
+        add_header Strict-Transport-Security    "max-age=31536000" always;
+        # Relaxed CSP required by RFB.js:
+        #   style-src unsafe-inline  — RFB sets inline canvas styles
+        #   img-src blob:            — cursor images
+        #   worker-src blob:         — framebuffer decoder workers
+        #   connect-src wss://       — WebSocket (explicit origin avoids browser edge cases)
+        add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' wss://cloudkeep.duckdns.org; worker-src blob:; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'" always;
+        try_files $uri $uri/ /app/index.html;
+    }
+
+    # ================================================================
+    # Static assets + landing page
+    # ================================================================
+
+    # Explicit JS location with correct MIME type.
+    # ^~ prefix: beats the regex block, ensuring /assets/*.js and
+    # /lib/novnc/**/*.js are served as application/javascript, not text/html.
+    location ^~ /assets/ {
+        add_header Cache-Control "public, no-transform" always;
+        try_files $uri =404;
+    }
+
+    location ^~ /lib/ {
+        add_header Cache-Control "public, no-transform" always;
+        try_files $uri =404;
+    }
+
+    location ~* \.(html|css|svg|png|jpg|jpeg|gif|webp|ico|woff2?)$ {
+        expires 1h;
+        add_header Cache-Control "public, no-transform" always;
+        try_files $uri =404;
+    }
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    # Compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 256;
+    gzip_proxied any;
+    gzip_types text/plain text/css application/javascript image/svg+xml;
+
+    listen 443 ssl; # managed by Certbot
+    listen [::]:443 ssl ipv6only=on; # managed by Certbot
+    ssl_certificate /etc/letsencrypt/live/cloudkeep.duckdns.org/fullchain.pem; # managed by Certbot
+    ssl_certificate_key /etc/letsencrypt/live/cloudkeep.duckdns.org/privkey.pem; # managed by Certbot
+    include /etc/letsencrypt/options-ssl-nginx.conf; # managed by Certbot
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem; # managed by Certbot
+
+    add_header Strict-Transport-Security "max-age=31536000" always; # managed by Certbot
+
+}
+
+server {
+    if ($host = cloudkeep.duckdns.org) {
+        return 301 https://$host$request_uri;
+    } # managed by Certbot
+
+    listen 80;
+    listen [::]:80;
+    server_name cloudkeep.duckdns.org;
+    return 444;
+}

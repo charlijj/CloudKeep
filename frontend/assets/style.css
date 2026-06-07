@@ -1,0 +1,118 @@
+/* ============================================================
+   cloudkeep — combined stylesheet (base tokens + gateway)
+   Both the landing page and the gateway SPA load this file.
+   ============================================================ */
+
+/* ---------- Reset ---------- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+
+/* ---------- Theme tokens ---------- */
+:root {
+    --bg:           #0d1117;
+    --surface:      #161b22;
+    --surface-2:    #1c2128;
+    --border:       #30363d;
+    --border-soft:  #21262d;
+    --text:         #e6edf3;
+    --text-soft:    #c9d1d9;
+    --text-muted:   #8b949e;
+    --radius:       6px;
+    --container:    1100px;
+    --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+/* ---------- Base ---------- */
+body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    -webkit-font-smoothing: antialiased;
+}
+a { color: var(--text); text-decoration: underline; text-decoration-color: var(--border); text-underline-offset: 3px; }
+a:hover { text-decoration-color: var(--text); }
+h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
+
+/* ---------- Layout ---------- */
+.container { width: 100%; max-width: var(--container); margin: 0 auto; padding: 0 24px; }
+
+/* ---------- Header ---------- */
+.site-header { border-bottom: 1px solid var(--border); background: var(--bg); }
+.site-header .container { padding-top: 14px; padding-bottom: 14px; display: flex; align-items: center; }
+.brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; color: var(--text); text-decoration: none; }
+.brand-mark { width: 22px; height: 22px; border: 1px solid var(--border); border-radius: 5px; display: inline-flex; align-items: center; justify-content: center; color: var(--text); background: var(--surface); font-size: 12px; }
+.brand-name { font-size: 13px; }
+
+/* ---------- Main ---------- */
+main { flex: 1; padding: 48px 0; }
+
+/* ---------- Hero ---------- */
+.hero { margin-bottom: 48px; }
+.hero-title { font-size: 28px; margin-bottom: 8px; }
+.hero-tagline { color: var(--text-muted); max-width: 600px; }
+
+/* ---------- Section ---------- */
+.section + .section { margin-top: 48px; }
+.section-header { padding-bottom: 10px; margin-bottom: 20px; border-bottom: 1px solid var(--border-soft); }
+.section-title { font-size: 15px; }
+
+/* ---------- Card ---------- */
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+.card:hover { border-color: var(--text-muted); }
+.card-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.card-title { font-size: 14px; }
+.card-body { color: var(--text-muted); font-size: 13px; }
+
+/* ---------- Badge ---------- */
+.badge { font-size: 11px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-muted); background: var(--bg); text-transform: lowercase; letter-spacing: 0.02em; }
+.badge--active  { color: var(--text); border-color: var(--text-muted); }
+.badge--pending { color: var(--text-muted); background: var(--surface-2); }
+.badge--down    { color: var(--text); background: var(--surface-2); border-style: dashed; }
+
+/* ---------- Footer ---------- */
+.site-footer { border-top: 1px solid var(--border); padding: 16px 0; }
+.site-footer-text { color: var(--text-muted); font-size: 12px; }
+
+/* ---------- Responsive ---------- */
+@media (max-width: 600px) { main { padding: 32px 0; } .hero-title { font-size: 22px; } }
+
+/* ============================================================
+   Gateway SPA (login / dashboard / viewer)
+   ============================================================ */
+
+/* View switching — [hidden] must beat any display rule on the view itself */
+[hidden] { display: none !important; }
+
+/* ---------- Buttons ---------- */
+.btn { font-family: var(--font-mono); font-size: 13px; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 14px; cursor: pointer; }
+.btn:hover:not(:disabled) { border-color: var(--text-muted); }
+.btn:disabled { color: var(--text-muted); cursor: not-allowed; }
+.btn--card { margin-top: 12px; width: 100%; display: block; text-align: center; text-decoration: none; }
+.btn--ghost { background: transparent; padding: 4px 10px; font-size: 12px; }
+
+/* ---------- Login ---------- */
+#view-login { display: flex; align-items: center; justify-content: center; min-height: 60vh; }
+.auth-card { width: 100%; max-width: 320px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
+.auth-title { font-size: 16px; margin-bottom: 20px; }
+.auth-form { display: flex; flex-direction: column; gap: 14px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field-label { font-size: 12px; color: var(--text-muted); }
+.field-input { font-family: var(--font-mono); font-size: 13px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 9px 10px; }
+.field-input:focus { outline: none; border-color: var(--text-muted); }
+.form-error { color: var(--text); font-size: 12px; border: 1px solid var(--text-muted); border-radius: var(--radius); background: var(--surface-2); padding: 8px 10px; }
+
+/* ---------- Viewer ---------- */
+body[data-view="viewer"] { height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+body[data-view="viewer"] .site-header,
+body[data-view="viewer"] #main { display: none !important; }
+.view-viewer { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.viewer-bar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--bg); flex-shrink: 0; }
+.viewer-status { flex: 1; font-size: 12px; color: var(--text-muted); }
+.viewer-screen { flex: 1; min-height: 0; background: #000; overflow: hidden; position: relative; }
+.viewer-screen > :first-child { width: 100% !important; height: 100% !important; }

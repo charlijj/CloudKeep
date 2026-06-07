@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>cloudkeep — gateway</title>
+    <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body data-view="login">
+    <header class="site-header">
+        <div class="container">
+            <a class="brand" href="/">
+                <span class="brand-mark" aria-hidden="true">&#9635;</span>
+                <span class="brand-name">cloudkeep</span>
+            </a>
+        </div>
+    </header>
+
+    <main class="container" id="main">
+        <!-- LOGIN -->
+        <section id="view-login" class="view">
+            <div class="auth-card">
+                <h1 class="auth-title">Sign in</h1>
+                <form id="login-form" class="auth-form" autocomplete="off">
+                    <label class="field">
+                        <span class="field-label">username</span>
+                        <input class="field-input" id="username" name="username" type="text" required autofocus>
+                    </label>
+                    <label class="field">
+                        <span class="field-label">password</span>
+                        <input class="field-input" id="password" name="password" type="password" required>
+                    </label>
+                    <button class="btn" id="submit" type="submit">Sign in</button>
+                    <p class="form-error" id="login-error" role="alert" hidden></p>
+                </form>
+            </div>
+        </section>
+
+        <!-- DASHBOARD -->
+        <section id="view-dashboard" class="view" hidden>
+            <header class="section-header">
+                <h2 class="section-title">Desktops</h2>
+            </header>
+            <div class="card-grid">
+                <!-- POC: one hardcoded VM. In v2 this list is rendered from the API. -->
+                <article class="card">
+                    <header class="card-header">
+                        <h3 class="card-title">soccer-vision-vm</h3>
+                        <span class="badge badge--active">ready</span>
+                    </header>
+                    <p class="card-body">XFCE desktop &middot; 1280&times;800</p>
+                    <button class="btn btn--card" data-vm="vm-01" type="button">Connect</button>
+                </article>
+            </div>
+            <p class="form-error" id="dashboard-error" role="alert" hidden></p>
+        </section>
+    </main>
+
+    <!-- VIEWER (full-bleed, outside .container) -->
+    <section id="view-viewer" class="view view-viewer" hidden>
+        <div class="viewer-bar">
+            <span class="brand-mark" aria-hidden="true">&#9635;</span>
+            <span id="status" class="viewer-status">Connecting&hellip;</span>
+            <button class="btn btn--ghost" id="disconnect" type="button">Disconnect</button>
+        </div>
+        <div id="screen" class="viewer-screen"></div>
+    </section>
+
+    <script type="module" src="/assets/app.js"></script>
+</body>
+</html>
