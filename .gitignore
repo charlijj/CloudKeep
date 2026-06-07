@@ -8,6 +8,9 @@ sys/vnc/passwd
 __pycache__/
 *.py[cod]
 
+# Node / frontend build tooling (the noVNC bundle artifact IS committed)
+node_modules/
+
 # Local VNC runtime artifacts
 sys/vnc/*.log
 sys/vnc/*.pid

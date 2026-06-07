@@ -138,20 +138,60 @@ curl -s http://10.10.10.2:8000/health    # {"status":"ok","vnc_reachable":true,.
 
 ---
 
-## 3. EC2 edge — frontend (Phase 2 client tuning)
+## 3. EC2 edge — frontend (Phase 2 + 3)
 
-Only `frontend/assets/app.js` changed (qualityLevel / compressionLevel). Static
-deploy, no NGINX change this phase.
+The SPA now loads noVNC as a single pre-built bundle (`lib/novnc.bundle.js`),
+not the ~40-module raw tree, so the raw submodule source does **not** need to be
+deployed.
 
 ```bash
-# Sync the SPA to the web root (preserves the noVNC submodule under lib/)
-sudo rsync -a --delete frontend/ /var/www/html/cloudkeep/
+# Sync the SPA to the web root. Exclude the raw noVNC submodule source — only
+# the committed bundle (lib/novnc.bundle.js) is served at runtime.
+sudo rsync -a --delete --exclude 'lib/novnc/' frontend/ /var/www/html/cloudkeep/
 
-# Validate and reload (reload is harmless for static; keeps things tidy)
+# Validate and reload
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
 Hard-refresh the browser (Ctrl/Cmd-Shift-R) so the updated `app.js` is fetched.
+
+> **Rebuilding the bundle** (only needed if you bump the noVNC submodule): from
+> `frontend/`, run `npm install` then `npm run build:novnc`, and bump the
+> `?v=1.5.0` query in `assets/app.js` to the new version so the immutable cache
+> is busted. The regenerated `lib/novnc.bundle.js` is what you commit + deploy.
+
+---
+
+## 5. EC2 edge — NGINX (Phase 3)
+
+Fixes the cold-load `NS_ERROR_CORRUPTED_CONTENT` / disallowed-MIME failures and
+improves first-connect latency. Three changes in `sys/cloudkeep`:
+
+1. **Rate limiting moved off static assets** onto `/ck/auth/` only. The old
+   server-wide `limit_req` returned `503` (HTML) for the overflow of a cold
+   asset burst, which the browser rejected as a bad-MIME module load.
+2. **HTTP/2 enabled** (`listen 443 ssl http2`) — multiplexes assets over one
+   connection.
+3. **`/lib/` served immutable** (the bundle is cache-busted via `?v=`), and
+   `/assets/` given a short revalidating cache.
+
+```bash
+# Deploy the vhost (path may be sites-available/cloudkeep on your box)
+sudo cp sys/cloudkeep /etc/nginx/sites-available/cloudkeep
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Confirm HTTP/2 and that the limiter no longer hits static assets:
+
+```bash
+curl -sI --http2 https://cloudkeep.duckdns.org/app/ | grep -i '^HTTP'   # expect HTTP/2 200
+# After a cold load, there should be no 503s on the bundle/assets:
+sudo awk '$9==503' /var/log/nginx/cloudkeep.access.log | tail
+```
+
+> Requires the `cloudkeep_req` / `cloudkeep_conn` zones to already exist in the
+> `http {}` block of `nginx.conf` (they did before — unchanged here). If Certbot
+> later rewrites the `listen` lines and drops `http2`, re-add it.
 
 ---
 
