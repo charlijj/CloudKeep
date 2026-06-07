@@ -24,8 +24,9 @@ function showView(name) {
     for (const [key, el] of Object.entries(views)) el.hidden = key !== name;
     document.body.dataset.view = name;
     // Warm up RFB.js the moment the dashboard becomes visible so the module
-    // graph is cached by the time the user clicks Connect.
-    if (name === 'dashboard') import('/lib/novnc/core/rfb.js').catch(() => {});
+    // is cached by the time the user clicks Connect. Single pre-bundled file
+    // (esbuild) — one request instead of noVNC's ~40-module graph.
+    if (name === 'dashboard') import('/lib/novnc.bundle.js?v=1.5.0').catch(() => {});
 }
 
 // ---------- login ----------
@@ -91,7 +92,7 @@ const statusEl = document.getElementById('status');
 const screenEl = document.getElementById('screen');
 
 async function connectViewer(sessionToken) {
-    const { default: RFB } = await import('/lib/novnc/core/rfb.js');
+    const { default: RFB } = await import('/lib/novnc.bundle.js?v=1.5.0');
     showView('viewer');
     statusEl.textContent = 'Connecting\u2026';
     // Yield one frame so layout paints and #screen has measurable height.
