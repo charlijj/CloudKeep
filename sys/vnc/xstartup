@@ -1,4 +1,25 @@
 #!/bin/sh
+# CloudKeep VNC session startup.
+#
+# Tuned for low-latency remote desktop: the XFCE compositor is the single
+# biggest source of needless repaint over VNC (translucency, shadows, fades
+# all dirty large screen regions), and it is especially costly here because
+# the VM renders with software GL (llvmpipe). Disabling it — plus drawing
+# only window outlines while moving/resizing — means fewer and smaller RFB
+# updates and far less encoder CPU per frame.
+
 unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
-exec dbus-launch --exit-with-session startxfce4
+
+# dbus-launch sets DBUS_SESSION_BUS_ADDRESS in the env of the command it runs,
+# so xfconf-query (which auto-spawns xfconfd on that bus) can apply settings
+# before the desktop starts. --exit-with-session keeps the original cleanup:
+# the session bus dies when XFCE exits, so reconnects don't leak dbus daemons.
+exec dbus-launch --exit-with-session sh -c '
+    # Performance tweaks. Idempotent and non-fatal (--create handles first run,
+    # || true survives a missing xfconfd); they persist to xfconf after run one.
+    xfconf-query -c xfwm4 -p /general/use_compositing -s false --create -t bool 2>/dev/null || true
+    xfconf-query -c xfwm4 -p /general/box_move        -s true  --create -t bool 2>/dev/null || true
+    xfconf-query -c xfwm4 -p /general/box_resize      -s true  --create -t bool 2>/dev/null || true
+    exec startxfce4
+'

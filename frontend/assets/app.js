@@ -103,6 +103,15 @@ async function connectViewer(sessionToken) {
     _rfb.resizeSession = false;  // do not ask the server to resize
     _rfb.viewOnly = false;       // forward mouse + keyboard
 
+    // --- Latency tuning: the bytes-vs-quality/CPU dials for Tight+JPEG ---
+    // These are sent to the server (Tight pseudo-encodings) and override its
+    // defaults, so the server config no longer has to guess. Tuned for WAN
+    // responsiveness: readable text with fewer bytes per frame. Adjust after
+    // measuring a real session — lower quality on slow links, lower
+    // compression if the VM (software-rendered) becomes encoder-CPU bound.
+    _rfb.qualityLevel = 6;       // JPEG quality, 0-9 (default 6)
+    _rfb.compressionLevel = 6;   // zlib effort, 0-9; higher = fewer bytes, more VM CPU
+
     _rfb.addEventListener('connect', () => { statusEl.textContent = 'Connected'; });
     _rfb.addEventListener('disconnect', () => {
         _rfb = null;

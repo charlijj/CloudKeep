@@ -1,0 +1,13 @@
+# Secrets — provided out-of-band, never committed
+.env
+*.env
+backend/src/.env
+sys/vnc/passwd
+
+# Python build artifacts
+__pycache__/
+*.py[cod]
+
+# Local VNC runtime artifacts
+sys/vnc/*.log
+sys/vnc/*.pid

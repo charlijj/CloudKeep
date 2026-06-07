@@ -36,6 +36,10 @@ class VNCBridge:
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
         self._tasks: list[asyncio.Task] = []
+        # Phase 0 baseline instrumentation: per-session byte/frame counters.
+        self._bytes_c2s = 0   # browser -> VNC (input: mouse/keyboard)
+        self._bytes_s2c = 0   # VNC -> browser (framebuffer stream)
+        self._frames_s2c = 0  # count of VNC -> browser chunks (framebuffer reads)
 
     async def connect(self) -> None:
         """Open the TCP connection to the VNC server.
@@ -73,12 +77,32 @@ class VNCBridge:
                 task.cancel()
         finally:
             await self.close()
-            logger.info("bridge closed (%.1fs)", time.monotonic() - started)
+            self._log_stats(time.monotonic() - started)
+
+    def _log_stats(self, elapsed: float) -> None:
+        """Phase 0 baseline: per-session byte/throughput summary on close.
+
+        s2c (VNC -> browser) is the framebuffer stream and dominates bandwidth;
+        c2s (browser -> VNC) is just input. Average bytes/frame and downstream
+        KB/s tell us whether a session is bytes-bound (rate near link capacity)
+        or RTT-bound (low rate but still laggy -> measure ping, see sys/DEPLOY.md).
+        """
+        secs = max(elapsed, 1e-3)
+        down_kbps = self._bytes_s2c / secs / 1024
+        up_kbps = self._bytes_c2s / secs / 1024
+        avg_frame = self._bytes_s2c / self._frames_s2c if self._frames_s2c else 0
+        logger.info(
+            "bridge closed (%.1fs) down=%.1fKB/s up=%.1fKB/s "
+            "s2c=%dB c2s=%dB frames=%d avg_frame=%.0fB",
+            elapsed, down_kbps, up_kbps,
+            self._bytes_s2c, self._bytes_c2s, self._frames_s2c, avg_frame,
+        )
 
     async def _ws_to_vnc(self, websocket: WebSocket) -> None:
         """Forward browser -> VNC. Binary frames only."""
         while True:
             data = await websocket.receive_bytes()
+            self._bytes_c2s += len(data)
             self._writer.write(data)
             await self._writer.drain()  # backpressure if the VNC server lags
 
@@ -88,6 +112,8 @@ class VNCBridge:
             data = await self._reader.read(_CHUNK)
             if not data:  # EOF — VNC server closed
                 break
+            self._bytes_s2c += len(data)
+            self._frames_s2c += 1
             await websocket.send_bytes(data)
 
     async def close(self) -> None:
