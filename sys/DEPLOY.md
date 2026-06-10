@@ -222,8 +222,58 @@ on both peers, then `sudo systemctl restart wg-quick@wg0`.
 
 ---
 
+## 6. KVM VM — run on boot (systemd)
+
+End-to-end "starts on boot" needs two units on the VM: the **desktop** (so VNC
+is listening on 127.0.0.1:5901) and the **gateway** (which the service file
+orders after it). Run as a user who can `sudo`.
+
+### 6a. VNC desktop on boot (TigerVNC's packaged unit)
+
+Use the distro's `tigervncserver@` template — don't hand-roll a sandbox around a
+full XFCE session. It reads `~app/.vnc/config` + `xstartup` (already in place).
+
+```bash
+# Map display :1 to the 'app' user
+echo ':1=app' | sudo tee -a /etc/tigervnc/vncserver.users
+
+# Stop any hand-started session first (a stale one holds :1 / the pid file)
+sudo -u app vncserver -kill :1 2>/dev/null || true
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now tigervncserver@:1.service
+systemctl status tigervncserver@:1.service --no-pager
+```
+
+### 6b. Gateway on boot (hardened unit in this repo)
+
+```bash
+sudo cp sys/systemd/cloudkeep-gateway.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now cloudkeep-gateway.service
+
+# Verify it's up and the hardening applied
+systemctl status cloudkeep-gateway --no-pager
+journalctl -u cloudkeep-gateway -n 30 --no-pager
+systemd-analyze security cloudkeep-gateway.service     # expect a low (good) score
+curl -s http://10.10.10.2:8000/health                  # {"status":"ok",...}
+```
+
+> **Before enabling:** stop any manually-run `python run.py` so two processes
+> don't fight over `10.10.10.2:8000`.
+>
+> **Adjust the WireGuard dependency** in the unit (`wg-quick@wg0.service`) to
+> match this host — check with `systemctl list-units --type=service | grep -i wg`.
+> If wg0 comes up via `systemd-networkd`, depend on
+> `systemd-networkd-wait-online.service` instead. The bind targets `10.10.10.2`,
+> so the unit must start after that address exists (Restart= covers a brief race).
+
+---
+
 ## Rollback
 
+- **Boot units:** `sudo systemctl disable --now cloudkeep-gateway.service` (and
+  `tigervncserver@:1.service`) to return to manual start.
 - **Desktop:** restore the previous `~/.vnc/xstartup`, `vncserver -kill :1 && vncserver :1`.
 - **Gateway:** start with the old command (`uvicorn auth:app --host 10.10.10.2 --port 8000`); uvloop/deflate changes live only in `run.py`.
 - **Frontend:** redeploy the previous `app.js` and hard-refresh.
