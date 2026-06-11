@@ -1,43 +1,82 @@
-// app.js — CloudKeep single-page gateway client (login + dashboard + viewer).
+// app.js — CloudKeep client: login → dashboard (fleet + builder) → viewer.
 //
-// One page, three views toggled in place. Because nothing navigates, the JWT
-// and session token never leave module memory: no localStorage, no
-// sessionStorage, no URL fragment. Module scope keeps them off `window`.
+// One page, three views toggled in place. The JWT lives only in module memory
+// (never localStorage/sessionStorage/URL), so a navigation or tab close ends
+// the session client-side. All dynamic DOM is built with createElement +
+// textContent — server data never meets innerHTML, so there is no XSS sink
+// even if a VM label or error message contains markup.
+//
+// Organisation: tiny helpers → api → views → login → dashboard → builder →
+// viewer. Each section only talks to the ones above it.
 
-let _jwt = null;   // set on login, held in memory only
-let _rfb = null;   // active RFB connection, if any
+'use strict';
 
-// Centralised error display: shows message in the nearest .form-error element.
-function _error(elId, msg) {
-    console.error('[cloudkeep]', elId, msg);
-    const el = document.getElementById(elId);
-    if (el) { el.textContent = msg; el.hidden = false; }
+// ---------- state ----------
+let jwt = null;        // bearer token, memory only
+let rfb = null;        // active noVNC connection
+let pollTimer = null;  // dashboard refresh while any VM is building
+
+// ---------- helpers ----------
+const $ = (id) => document.getElementById(id);
+
+// h('div', 'card', child1, child2) — element builder; strings become text
+// nodes (safe by construction).
+function h(tag, className, ...children) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    el.append(...children);
+    return el;
 }
 
-const views = {
-    login: document.getElementById('view-login'),
-    dashboard: document.getElementById('view-dashboard'),
-    viewer: document.getElementById('view-viewer'),
-};
+function showError(id, msg) {
+    const el = $(id);
+    el.textContent = msg;
+    el.hidden = false;
+}
+
+function clearError(id) { $(id).hidden = true; }
+
+const GB = (mb) => Math.round(mb / 1024);
+
+// ---------- api ----------
+// Controld is reached through the edge's /ck/ proxy. Every authed call goes
+// through this wrapper so 401 (expired JWT) is handled in exactly one place.
+async function api(path, opts = {}) {
+    const res = await fetch(`/ck${path}`, {
+        ...opts,
+        headers: { ...opts.headers, 'Authorization': `Bearer ${jwt}` },
+    });
+    if (res.status === 401) { sessionExpired(); throw new Error('unauthorized'); }
+    return res;
+}
+
+async function detail(res, fallback) {
+    return (await res.json().catch(() => ({}))).detail || fallback;
+}
+
+// ---------- views ----------
+const views = { login: $('view-login'), dashboard: $('view-dashboard'), viewer: $('view-viewer') };
 
 function showView(name) {
     for (const [key, el] of Object.entries(views)) el.hidden = key !== name;
     document.body.dataset.view = name;
-    // Warm up RFB.js the moment the dashboard becomes visible so the module
-    // is cached by the time the user clicks Connect. Single pre-bundled file
-    // (esbuild) — one request instead of noVNC's ~40-module graph.
+    $('logout').hidden = name === 'login';
+    // Pre-warm the noVNC bundle so Connect feels instant.
     if (name === 'dashboard') import('/lib/novnc.bundle.js?v=1.5.0').catch(() => {});
 }
 
-// ---------- login ----------
-const form = document.getElementById('login-form');
-const loginErr = document.getElementById('login-error');
-const submitBtn = document.getElementById('submit');
+function sessionExpired() {
+    jwt = null;
+    stopPolling();
+    showView('login');
+    showError('login-error', 'Session expired — please sign in again.');
+}
 
-form.addEventListener('submit', async (event) => {
+// ---------- login ----------
+$('login-form').addEventListener('submit', async (event) => {
     event.preventDefault();
-    loginErr.hidden = true;
-    submitBtn.disabled = true;
+    clearError('login-error');
+    const form = event.target;
     try {
         const res = await fetch('/ck/auth/login', {
             method: 'POST',
@@ -47,87 +86,213 @@ form.addEventListener('submit', async (event) => {
                 password: form.password.value,
             }),
         });
-        if (!res.ok) throw new Error('login failed');
-        _jwt = (await res.json()).access_token;  // stays in memory only
+        if (!res.ok) throw new Error();
+        jwt = (await res.json()).access_token;
         form.reset();
         showView('dashboard');
+        refresh();
     } catch {
-        // Generic message — no hint whether user or password was wrong.
-        _error('login-error', 'Invalid credentials');
-    } finally {
-        submitBtn.disabled = false;
+        showError('login-error', 'Invalid credentials');  // generic on purpose
     }
 });
 
-// ---------- dashboard ----------
-const dashErr = document.getElementById('dashboard-error');
+$('logout').addEventListener('click', () => {
+    jwt = null;
+    stopPolling();
+    showView('login');
+});
 
-async function startSession(button) {
-    button.disabled = true;
-    dashErr.hidden = true;
+// ---------- dashboard ----------
+function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+// One refresh = VMs + resources in parallel; reused by polling, lifecycle
+// actions, and viewer-exit so the dashboard is never stale.
+async function refresh() {
+    clearError('dashboard-error');
     try {
-        const res = await fetch('/ck/auth/session', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${_jwt}` },
-        });
-        if (res.status === 401) {  // JWT expired/invalid -> re-auth
-            _jwt = null; _error('dashboard-error', 'Session expired — please sign in again.'); showView('login'); return;
-        }
-        if (!res.ok) throw new Error('session failed');
-        const { session_token } = await res.json();
-        await connectViewer(session_token);  // passed directly, never in URL
-    } catch {
-        _error('dashboard-error', `Session request failed (${res?.status ?? 'network error'})`);
-    } finally {
-        button.disabled = false;
+        const [vmsRes, resRes] = await Promise.all([api('/vms'), api('/resources')]);
+        const { vms } = await vmsRes.json();
+        renderVMs(vms);
+        renderResources(await resRes.json());
+        // Poll while anything is mid-build so cards flip to ready by themselves.
+        const busy = vms.some(v => v.state === 'PROVISIONING' || v.state === 'REQUESTED' || v.state === 'DELETING');
+        if (busy && !pollTimer) pollTimer = setInterval(refresh, 3000);
+        if (!busy) stopPolling();
+    } catch (e) {
+        if (e.message !== 'unauthorized') showError('dashboard-error', 'Could not reach the server.');
     }
 }
 
-for (const button of document.querySelectorAll('[data-vm]')) {
-    button.addEventListener('click', () => startSession(button));
+function renderResources(r) {
+    const you = r.you, host = r.host;
+    $('resbar').textContent =
+        `you: ${you.used_vms}/${you.max_vms} VMs · ` +
+        `${you.vcpus.used}/${you.vcpus.quota} vCPU · ` +
+        `${GB(you.mem_mb.used)}/${GB(you.mem_mb.quota)} GB RAM · ` +
+        `${you.disk_gb.used}/${you.disk_gb.quota} GB disk` +
+        `   —   host free: ${host.vcpus.free} vCPU · ${GB(host.mem_mb.free)} GB · ${host.disk_gb.free} GB`;
+    latestResources = r;   // builder caps its sliders from the same snapshot
 }
+
+const BADGE = {
+    RUNNING: ['ready', 'badge--active'],
+    PROVISIONING: ['building…', 'badge--pending'],
+    REQUESTED: ['queued', 'badge--pending'],
+    STOPPED: ['stopped', 'badge--down'],
+    ERROR: ['error', 'badge--down'],
+    DELETING: ['deleting…', 'badge--down'],
+};
+
+function renderVMs(vms) {
+    const list = $('vm-list');
+    list.replaceChildren();
+    $('vm-empty').hidden = vms.length > 0;
+
+    for (const vm of vms) {
+        const [text, cls] = BADGE[vm.state] || [vm.state.toLowerCase(), 'badge--down'];
+        const card = h('article', 'card',
+            h('header', 'card-header',
+                h('h3', 'card-title', vm.label),
+                h('span', `badge ${cls}`, text)),
+            h('p', 'card-body', `${vm.vcpus} vCPU · ${GB(vm.mem_mb)} GB RAM · ${vm.disk_gb} GB disk`));
+        if (vm.state === 'ERROR' && vm.error_msg)
+            card.append(h('p', 'card-err', vm.error_msg));
+
+        const actions = h('div', 'card-actions');
+        if (vm.state === 'RUNNING') {
+            actions.append(button('Connect', 'btn--card', () => connect(vm.id)));
+            actions.append(button('Stop', 'btn--ghost', () => lifecycle(vm.id, 'stop')));
+        } else if (vm.state === 'STOPPED') {
+            actions.append(button('Start', 'btn--card', () => lifecycle(vm.id, 'start')));
+        }
+        if (!['PROVISIONING', 'REQUESTED', 'DELETING'].includes(vm.state))
+            actions.append(button('Delete', 'btn--ghost btn--danger', () => destroy(vm.id, vm.label)));
+        if (actions.childElementCount) card.append(actions);
+        list.append(card);
+    }
+}
+
+function button(text, cls, onClick) {
+    const b = h('button', `btn ${cls}`, text);
+    b.type = 'button';
+    b.addEventListener('click', () => { b.disabled = true; onClick(); });
+    return b;
+}
+
+async function lifecycle(id, verb) {
+    const res = await api(`/vms/${id}/${verb}`, { method: 'POST' });
+    if (!res.ok) showError('dashboard-error', await detail(res, `${verb} failed`));
+    refresh();
+}
+
+async function destroy(id, label) {
+    if (!confirm(`Delete "${label}"? This cannot be undone.`)) { refresh(); return; }
+    const res = await api(`/vms/${id}`, { method: 'DELETE' });
+    if (!res.ok && res.status !== 204) showError('dashboard-error', await detail(res, 'delete failed'));
+    refresh();
+}
+
+// ---------- builder ----------
+let latestResources = null;
+
+const sliders = {
+    vcpus: { input: $('in-vcpus'), output: $('out-vcpus'), toUnits: v => v },
+    mem:   { input: $('in-mem'),   output: $('out-mem'),   toUnits: GB },
+    disk:  { input: $('in-disk'),  output: $('out-disk'),  toUnits: v => v },
+};
+for (const s of Object.values(sliders))
+    s.input.addEventListener('input', () => { s.output.textContent = s.toUnits(s.input.value); });
+
+$('build-toggle').addEventListener('click', () => {
+    const builder = $('builder');
+    builder.hidden = !builder.hidden;
+    if (!builder.hidden) configureBuilder();
+});
+
+// Cap every slider at min(static bound, host free, quota left). The server
+// re-validates under its allocation lock — these caps are UX, not security.
+function configureBuilder() {
+    clearError('builder-error');
+    const r = latestResources;
+    if (!r) return;
+    const b = r.bounds, host = r.host, you = r.you;
+    const left = (q) => q.quota - q.used;
+
+    setRange(sliders.vcpus, b.vcpus[0], Math.min(b.vcpus[1], host.vcpus.free, left(you.vcpus)), 1);
+    setRange(sliders.mem, b.mem_mb[0], Math.min(b.mem_mb[1], host.mem_mb.free, left(you.mem_mb)), b.mem_mb[2]);
+    setRange(sliders.disk, b.disk_gb[0], Math.min(b.disk_gb[1], host.disk_gb.free, left(you.disk_gb)), 1);
+
+    const vmsLeft = you.max_vms - you.used_vms;
+    const fits = Object.values(sliders).every(s => Number(s.input.max) >= Number(s.input.min));
+    $('build-submit').disabled = vmsLeft <= 0 || !fits;
+    if (vmsLeft <= 0) showError('builder-error', 'VM quota reached.');
+    else if (!fits) showError('builder-error', 'Not enough free resources for the minimum size.');
+}
+
+function setRange(s, min, max, step) {
+    s.input.min = min;
+    s.input.max = Math.max(min, max);
+    s.input.step = step;
+    s.input.value = min;                  // default to the smallest build
+    s.output.textContent = s.toUnits(min);
+}
+
+$('builder').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    clearError('builder-error');
+    const btn = $('build-submit');
+    btn.disabled = true;
+    try {
+        const res = await api('/vms', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                label: $('vm-label').value,
+                vcpus: Number(sliders.vcpus.input.value),
+                mem_mb: Number(sliders.mem.input.value),
+                disk_gb: Number(sliders.disk.input.value),
+            }),
+        });
+        if (!res.ok) throw new Error(await detail(res, 'provision failed'));
+        $('builder').reset();
+        $('builder').hidden = true;
+        refresh();                         // the new card appears as "queued"
+    } catch (e) {
+        if (e.message !== 'unauthorized') showError('builder-error', e.message);
+    } finally {
+        btn.disabled = false;
+    }
+});
 
 // ---------- viewer ----------
-const statusEl = document.getElementById('status');
-const screenEl = document.getElementById('screen');
+async function connect(vmId) {
+    // Mint a single-use, 30s token bound server-side to this VM, then hand it
+    // straight to the WebSocket — it never touches storage or history.
+    const res = await api(`/vms/${vmId}/session`, { method: 'POST' });
+    if (!res.ok) { showError('dashboard-error', await detail(res, 'could not start session')); refresh(); return; }
+    const { session_token } = await res.json();
 
-async function connectViewer(sessionToken) {
     const { default: RFB } = await import('/lib/novnc.bundle.js?v=1.5.0');
     showView('viewer');
-    statusEl.textContent = 'Connecting\u2026';
-    // Yield one frame so layout paints and #screen has measurable height.
-    await new Promise(r => requestAnimationFrame(r));
+    $('status').textContent = 'Connecting…';
+    await new Promise(r => requestAnimationFrame(r));  // let #screen get height
 
-    const wsUrl = `wss://${window.location.host}/ck/ws?session_token=${sessionToken}`;
-    _rfb = new RFB(screenEl, wsUrl, {});
-    _rfb.scaleViewport = true;   // fit framebuffer to canvas
-    _rfb.resizeSession = false;  // do not ask the server to resize
-    _rfb.viewOnly = false;       // forward mouse + keyboard
+    rfb = new RFB($('screen'), `wss://${location.host}/ck/ws?session_token=${session_token}`, {});
+    rfb.scaleViewport = true;
+    rfb.resizeSession = false;
+    rfb.qualityLevel = 6;        // Tight+JPEG bytes-vs-quality dial
+    rfb.compressionLevel = 6;
 
-    // --- Latency tuning: the bytes-vs-quality/CPU dials for Tight+JPEG ---
-    // These are sent to the server (Tight pseudo-encodings) and override its
-    // defaults, so the server config no longer has to guess. Tuned for WAN
-    // responsiveness: readable text with fewer bytes per frame. Adjust after
-    // measuring a real session — lower quality on slow links, lower
-    // compression if the VM (software-rendered) becomes encoder-CPU bound.
-    _rfb.qualityLevel = 6;       // JPEG quality, 0-9 (default 6)
-    _rfb.compressionLevel = 6;   // zlib effort, 0-9; higher = fewer bytes, more VM CPU
-
-    _rfb.addEventListener('connect', () => { statusEl.textContent = 'Connected'; });
-    _rfb.addEventListener('disconnect', () => {
-        _rfb = null;
-        // JWT is still valid (1hr) -> return to dashboard, reconnect needs a
-        // fresh single-use session token, which the dashboard requests again.
-        setTimeout(() => showView('dashboard'), 600);
-    });
-    _rfb.addEventListener('credentialsrequired', () => {
-        // Should never fire: VNC runs SecurityTypes=None behind the gateway.
-        console.error('VNC requested credentials — config mismatch');
+    rfb.addEventListener('connect', () => { $('status').textContent = 'Connected'; });
+    rfb.addEventListener('disconnect', () => {
+        rfb = null;
+        setTimeout(() => { showView('dashboard'); refresh(); }, 600);
     });
 }
 
-document.getElementById('disconnect')
-    .addEventListener('click', () => { if (_rfb) _rfb.disconnect(); });
+$('disconnect').addEventListener('click', () => { if (rfb) rfb.disconnect(); });
 
 // ---------- start ----------
 showView('login');

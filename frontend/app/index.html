@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex, nofollow">
-    <title>cloudkeep — gateway</title>
+    <title>cloudkeep</title>
     <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body data-view="login">
@@ -14,45 +14,47 @@
                 <span class="brand-mark" aria-hidden="true">&#9635;</span>
                 <span class="brand-name">cloudkeep</span>
             </a>
+            <button class="btn btn--ghost" id="logout" type="button" hidden>sign out</button>
         </div>
     </header>
 
-    <main class="container" id="main">
+    <main class="container">
         <!-- LOGIN -->
         <section id="view-login" class="view">
-            <div class="auth-card">
+            <form id="login-form" class="auth-card" autocomplete="off">
                 <h1 class="auth-title">Sign in</h1>
-                <form id="login-form" class="auth-form" autocomplete="off">
-                    <label class="field">
-                        <span class="field-label">username</span>
-                        <input class="field-input" id="username" name="username" type="text" required autofocus>
-                    </label>
-                    <label class="field">
-                        <span class="field-label">password</span>
-                        <input class="field-input" id="password" name="password" type="password" required>
-                    </label>
-                    <button class="btn" id="submit" type="submit">Sign in</button>
-                    <p class="form-error" id="login-error" role="alert" hidden></p>
-                </form>
-            </div>
+                <label class="field"><span class="field-label">username</span>
+                    <input class="field-input" name="username" type="text" required autofocus></label>
+                <label class="field"><span class="field-label">password</span>
+                    <input class="field-input" name="password" type="password" required></label>
+                <button class="btn" type="submit">Sign in</button>
+                <p class="form-error" id="login-error" role="alert" hidden></p>
+            </form>
         </section>
 
-        <!-- DASHBOARD -->
+        <!-- DASHBOARD: resources strip + builder + VM cards.
+             All dynamic content is rendered by app.js into the stubs below. -->
         <section id="view-dashboard" class="view" hidden>
-            <header class="section-header">
-                <h2 class="section-title">Desktops</h2>
+            <p class="resbar" id="resbar"></p>
+            <header class="section-header section-header--row">
+                <h2 class="section-title">machines</h2>
+                <button class="btn" id="build-toggle" type="button">+ build</button>
             </header>
-            <div class="card-grid">
-                <!-- POC: one hardcoded VM. In v2 this list is rendered from the API. -->
-                <article class="card">
-                    <header class="card-header">
-                        <h3 class="card-title">soccer-vision-vm</h3>
-                        <span class="badge badge--active">ready</span>
-                    </header>
-                    <p class="card-body">XFCE desktop &middot; 1280&times;800</p>
-                    <button class="btn btn--card" data-vm="vm-01" type="button">Connect</button>
-                </article>
-            </div>
+            <form id="builder" class="builder" autocomplete="off" hidden>
+                <label class="field"><span class="field-label">name</span>
+                    <input class="field-input" id="vm-label" maxlength="40" placeholder="my-desktop" required></label>
+                <!-- sliders are configured (min/max/step) from GET /resources -->
+                <label class="field"><span class="field-label">vCPUs &middot; <output id="out-vcpus"></output></span>
+                    <input class="slider" id="in-vcpus" type="range"></label>
+                <label class="field"><span class="field-label">memory &middot; <output id="out-mem"></output> GB</span>
+                    <input class="slider" id="in-mem" type="range"></label>
+                <label class="field"><span class="field-label">disk &middot; <output id="out-disk"></output> GB</span>
+                    <input class="slider" id="in-disk" type="range"></label>
+                <button class="btn" id="build-submit" type="submit">Provision</button>
+                <p class="form-error" id="builder-error" role="alert" hidden></p>
+            </form>
+            <div class="card-grid" id="vm-list"></div>
+            <p class="empty" id="vm-empty" hidden>No machines yet. Build one to get started.</p>
             <p class="form-error" id="dashboard-error" role="alert" hidden></p>
         </section>
     </main>
@@ -62,7 +64,7 @@
         <div class="viewer-bar">
             <span class="brand-mark" aria-hidden="true">&#9635;</span>
             <span id="status" class="viewer-status">Connecting&hellip;</span>
-            <button class="btn btn--ghost" id="disconnect" type="button">Disconnect</button>
+            <button class="btn btn--ghost" id="disconnect" type="button">disconnect</button>
         </div>
         <div id="screen" class="viewer-screen"></div>
     </section>

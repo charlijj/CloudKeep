@@ -1,0 +1,69 @@
+# cloudkeep-controld — hardened systemd service for the v2 control plane.
+# Runs on the KVM HOST. Authenticates users, tracks resources, and provisions
+# VMs via the libvirt API; also bridges WebSocket<->VNC to each VM.
+#
+# Install (on the host):
+#   sudo cp sys/systemd/cloudkeep-controld.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now cloudkeep-controld.service
+#   systemd-analyze security cloudkeep-controld.service
+#
+# Assumes code at /opt/cloudkeep/src, venv at /opt/cloudkeep/venv, run as the
+# 'cloudkeep' user (member of libvirt + kvm). DB/images under /var/lib/cloudkeep.
+
+[Unit]
+Description=CloudKeep control plane (controld)
+Documentation=https://github.com/charlijj/CloudKeep
+After=network-online.target wg-quick@wg0.service libvirtd.service virtnetworkd.service
+Wants=network-online.target wg-quick@wg0.service libvirtd.service
+StartLimitIntervalSec=120
+StartLimitBurst=10
+
+[Service]
+Type=exec
+User=cloudkeep
+Group=cloudkeep
+SupplementaryGroups=libvirt kvm
+WorkingDirectory=/opt/cloudkeep/src
+ExecStart=/opt/cloudkeep/venv/bin/python /opt/cloudkeep/src/run.py
+# JWT_SECRET loads from /opt/cloudkeep/src/.env (mode 600) via config.py, so it
+# is NOT placed in the process environment here. Fail-closed without it.
+Environment=PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=30
+
+# ---- Hardening (least privilege; verify: systemd-analyze security) --------
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+# Writable: the SQLite DB, and the libvirt client socket dir (connect needs it).
+ReadWritePaths=/var/lib/cloudkeep /run/libvirt
+PrivateTmp=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Egress: loopback, the WG subnet (EC2 peer + our bind), and the guest network
+# (to reach each VM's in-guest VNC over ckbr0). Nothing else.
+IPAddressDeny=any
+IPAddressAllow=localhost 10.10.10.0/24 10.20.0.0/24
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
