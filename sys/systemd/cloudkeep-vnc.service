@@ -1,0 +1,35 @@
+# cloudkeep-vnc — in-guest TigerVNC desktop, baked into the Golden Image VM.
+#
+# Lives INSIDE the guest (the soccer-vision-vm template). Every cloned VM boots
+# this so its XFCE desktop is reachable at <guest-ip>:5901, which the host's
+# controld bridges to the browser. Guest UFW must allow 5901 only from the host
+# bridge address (10.20.0.1) — see sys/GOLDEN-IMAGE.md.
+#
+# Install (inside the golden image, then it ships to every clone):
+#   sudo cp cloudkeep-vnc.service /etc/systemd/system/
+#   sudo systemctl enable cloudkeep-vnc.service
+#
+# Session config comes from ~app/.vnc/{config,xstartup} (geometry, XFCE, perf
+# tweaks). 'app' is the desktop user.
+
+[Unit]
+Description=CloudKeep in-guest VNC desktop (TigerVNC :1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+User=app
+Group=app
+# %H is the runtime hostname, which the first-boot unit sets per clone.
+PIDFile=/home/app/.vnc/%H:1.pid
+ExecStartPre=-/usr/bin/vncserver -kill :1
+# -localhost no: listen on the guest interface so the host gateway can reach it
+# (UFW restricts the actual exposure to the host bridge IP only).
+ExecStart=/usr/bin/vncserver :1 -localhost no
+ExecStop=/usr/bin/vncserver -kill :1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

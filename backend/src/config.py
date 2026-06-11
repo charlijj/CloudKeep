@@ -1,20 +1,17 @@
-"""Centralised settings for the CloudKeep gateway.
+"""Centralised settings for cloudkeep-controld (the v2 control plane).
 
-Single source of truth for configuration. Secrets are loaded from the
-environment (.env); nothing sensitive is hardcoded here.
+Runs on the KVM host. Single source of truth; secrets come from .env beside
+this module (JWT_SECRET fails closed). Host *totals* (CPU/RAM/disk) are read
+live from libvirt at runtime — only the reserves and policy live here.
 """
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Resolve .env next to this file, so the app works regardless of which
-# directory it is launched from or where the project is installed.
 _ENV_FILE = Path(__file__).resolve().parent / ".env"
 
 
 class Settings(BaseSettings):
-    """Runtime configuration, loaded from a .env beside this module."""
-
     model_config = SettingsConfigDict(
         env_file=_ENV_FILE,
         env_file_encoding="utf-8",
@@ -22,39 +19,62 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # VNC backend — always loopback on this host.
-    VNC_HOST: str = "127.0.0.1"
-    VNC_PORT: int = 5901
-
-    # FastAPI listen address — WireGuard interface only, never 0.0.0.0.
+    # --- Control-plane listen address (WireGuard interface only) ---
     LISTEN_HOST: str = "10.10.10.2"
     LISTEN_PORT: int = 8000
 
-    # JWT signing. JWT_SECRET has no default on purpose: the app must
-    # refuse to start if it is missing from the environment (fail closed).
-    JWT_SECRET: str
+    # --- Auth ---
+    JWT_SECRET: str                     # no default -> fail closed
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRY_MINUTES: int = 60
-
-    # One-time WebSocket session tokens.
     WS_TOKEN_EXPIRY_SECONDS: int = 30
-
-    # CORS / origin allowlist (single origin, no wildcard).
     ALLOWED_ORIGIN: str = "https://cloudkeep.duckdns.org"
-
-    # Per-IP rate limit on the login endpoint.
     AUTH_RATE_LIMIT: str = "5/minute"
+    PROVISION_RATE_LIMIT: str = "5/hour"
+
+    # --- Persistence ---
+    DB_PATH: str = "/var/lib/cloudkeep/db/cloudkeep.db"
+
+    # --- Virtualisation ---
+    # Set LIBVIRT_URI=fake to exercise the control plane (API/DB/quotas) with
+    # the in-memory FakeProvisioner, no libvirt/KVM required.
+    LIBVIRT_URI: str = "qemu:///system"
+    LIBVIRT_NETWORK: str = "ckbr0"
+    STORAGE_POOL: str = "cloudkeep"
+    IMAGE_DIR: str = "/var/lib/cloudkeep/images"
+    GOLDEN_IMAGE: str = "/var/lib/cloudkeep/images/golden-v1.qcow2"
+    OS_VARIANT: str = "ubuntu24.04"
+    PROVISION_TIMEOUT_S: int = 180      # wait for VNC ready before ERROR
+
+    # --- Guest network (isolated; VMs get a deterministic lease here) ---
+    GUEST_NET_PREFIX: str = "10.20.0"   # /24
+    GUEST_IP_START: int = 50            # .50 .. .250 assignable
+    GUEST_IP_END: int = 250
+    GUEST_VNC_PORT: int = 5901          # in-guest TigerVNC; bridge target
+
+    # --- Host reserves (never handed to guests) ---
+    RESERVE_VCPUS: int = 2
+    RESERVE_MEM_MB: int = 4096
+    RESERVE_DISK_GB: int = 50
+
+    # --- Per-user quota defaults (seed_user.py may override per user) ---
+    DEFAULT_MAX_VMS: int = 2
+    DEFAULT_MAX_VCPUS: int = 4
+    DEFAULT_MAX_MEM_MB: int = 8192
+    DEFAULT_MAX_DISK_GB: int = 100
+
+    # --- Builder sizing bounds (UI caps to min(quota, host-free) within these) ---
+    VM_MIN_VCPUS: int = 1
+    VM_MAX_VCPUS: int = 8
+    VM_MIN_MEM_MB: int = 1024
+    VM_MAX_MEM_MB: int = 16384
+    VM_MEM_STEP_MB: int = 1024
+    VM_MIN_DISK_GB: int = 16
+    VM_MAX_DISK_GB: int = 200
+
+    @property
+    def use_fake(self) -> bool:
+        return self.LIBVIRT_URI.strip().lower() == "fake"
 
 
 settings = Settings()
-
-# POC user store. Kept separate from Settings so it can be swapped for a
-# database lookup in v2 without touching the settings class.
-#
-# Generate a hash, then paste it below:
-#   python -c "import bcrypt; print(bcrypt.hashpw(b'your_password', bcrypt.gensalt()).decode())"
-#
-# Placeholder below is NOT a valid hash — replace it before first login.
-USERS: dict[str, str] = {
-    "command_user": "$2b$12$xhwV60T5b64awrYRUqAB4uSAu6N5IiS7jplWUm/jfBVe1tw2ZNDlC",
-}

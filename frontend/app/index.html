@@ -14,6 +14,7 @@
                 <span class="brand-mark" aria-hidden="true">&#9635;</span>
                 <span class="brand-name">cloudkeep</span>
             </a>
+            <button class="btn btn--ghost" id="logout" type="button" hidden>Sign out</button>
         </div>
     </header>
 
@@ -39,25 +40,43 @@
 
         <!-- DASHBOARD -->
         <section id="view-dashboard" class="view" hidden>
-            <header class="section-header">
-                <h2 class="section-title">Desktops</h2>
+            <header class="section-header section-header--row">
+                <h2 class="section-title">Your machines</h2>
+                <button class="btn" id="build-toggle" type="button">Build a machine</button>
             </header>
-            <div class="card-grid">
-                <!-- POC: one hardcoded VM. In v2 this list is rendered from the API. -->
-                <article class="card">
-                    <header class="card-header">
-                        <h3 class="card-title">soccer-vision-vm</h3>
-                        <span class="badge badge--active">ready</span>
-                    </header>
-                    <p class="card-body">XFCE desktop &middot; 1280&times;800</p>
-                    <button class="btn btn--card" data-vm="vm-01" type="button">Connect</button>
-                </article>
-            </div>
+
+            <!-- BUILDER -->
+            <section id="builder" class="builder" hidden>
+                <form id="builder-form" class="builder-form" autocomplete="off">
+                    <label class="field">
+                        <span class="field-label">name</span>
+                        <input class="field-input" id="vm-label" maxlength="40" placeholder="my-desktop" required>
+                    </label>
+                    <label class="field">
+                        <span class="field-label">vCPUs · <span id="out-vcpus">1</span></span>
+                        <input class="slider" id="in-vcpus" type="range">
+                    </label>
+                    <label class="field">
+                        <span class="field-label">memory · <span id="out-mem">1</span> GB</span>
+                        <input class="slider" id="in-mem" type="range">
+                    </label>
+                    <label class="field">
+                        <span class="field-label">disk · <span id="out-disk">16</span> GB</span>
+                        <input class="slider" id="in-disk" type="range">
+                    </label>
+                    <p class="builder-avail" id="builder-avail"></p>
+                    <button class="btn" id="build-submit" type="submit">Provision</button>
+                    <p class="form-error" id="builder-error" role="alert" hidden></p>
+                </form>
+            </section>
+
+            <div class="card-grid" id="vm-list"></div>
+            <p class="empty" id="vm-empty" hidden>No machines yet. Build one to get started.</p>
             <p class="form-error" id="dashboard-error" role="alert" hidden></p>
         </section>
     </main>
 
-    <!-- VIEWER (full-bleed, outside .container) -->
+    <!-- VIEWER (full-bleed) -->
     <section id="view-viewer" class="view view-viewer" hidden>
         <div class="viewer-bar">
             <span class="brand-mark" aria-hidden="true">&#9635;</span>

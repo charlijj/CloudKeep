@@ -123,6 +123,18 @@ server {
         proxy_send_timeout 3600s;
     }
 
+    # Control API (REST): /ck/vms, /ck/resources, /ck/vms/{id}/session, etc.
+    # Longest-prefix match means /ck/auth/ and /ck/ws above still win; this is
+    # the catch-all for the rest of the control plane. Not rate-limited (these
+    # are authenticated, low-volume calls); /ck/auth/ keeps its brute-force cap.
+    location /ck/ {
+        proxy_pass http://10.10.10.2:8000/;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     # Gateway SPA.
     # ^~ beats the regex .html cache block so /app/ gets THIS CSP, not 'script-src none'.
     # Because this location sets add_header, NGINX won't inherit parent headers — repeat them all.
