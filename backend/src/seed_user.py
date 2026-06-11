@@ -13,7 +13,7 @@ import argparse
 import getpass
 import sys
 
-import auth_core
+from auth_core import AuthService
 from config import settings
 from db import Database
 
@@ -34,16 +34,11 @@ def main() -> int:
         return 1
 
     db = Database(settings.DB_PATH)
-    pw_hash = auth_core.hash_password(pw)
+    pw_hash = AuthService(settings).hash_password(pw)
     role = "admin" if args.admin else "user"
-    existing = db.get_user(args.username)
-    if existing:
-        db._exec(
-            "UPDATE users SET pw_hash=?, role=?, max_vms=?, max_vcpus=?, "
-            "max_mem_mb=?, max_disk_gb=? WHERE username=?",
-            (pw_hash, role, args.max_vms, args.max_vcpus, args.max_mem_mb,
-             args.max_disk_gb, args.username),
-        )
+    if db.get_user(args.username):
+        db.update_user(args.username, pw_hash, role, args.max_vms,
+                       args.max_vcpus, args.max_mem_mb, args.max_disk_gb)
         print(f"updated user '{args.username}' ({role})")
     else:
         db.create_user(args.username, pw_hash, role, args.max_vms,

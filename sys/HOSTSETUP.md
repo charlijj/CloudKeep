@@ -17,6 +17,10 @@ Browser ⇄ EC2 NGINX ⇄ WireGuard (one tunnel) ⇄ HOST controld :8000 ⇄ VM_
 
 ## 1. Virtualisation stack + service identity
 
+> **Reference host:** QEMU/KVM + libvirt are already installed and proven
+> (existing VMs run today) — skip the install line and just add the missing
+> tools, the service user, and the directories. Fresh deployments run it all.
+
 ```bash
 sudo apt update
 sudo apt install -y qemu-kvm libvirt-daemon-system virtinst ovmf guestfs-tools nftables python3-venv
@@ -28,18 +32,19 @@ sudo install -d -o cloudkeep -g cloudkeep -m 0700 /var/lib/cloudkeep/db /var/lib
 virsh -c qemu:///system list --all      # sanity
 ```
 
-## 2. IOMMU for future GPU passthrough (the only reboot)
+## 2. IOMMU for GPU passthrough
 
-Cheap to enable now so Phase D needs no reboot window. Don't bind anything to
-`vfio-pci` yet.
+> **Reference host:** already enabled in GRUB and validated with real GPU
+> passthrough on previous VMs — nothing to do but verify. Fresh deployments
+> need the GRUB edit + reboot.
 
 ```bash
-# /etc/default/grub: add to GRUB_CMDLINE_LINUX_DEFAULT
-#   Intel:  intel_iommu=on iommu=pt
-#   AMD:    amd_iommu=on  iommu=pt
-sudo update-grub && sudo reboot
-# after reboot:
+# Verify (sufficient on the reference host):
 sudo dmesg | grep -iE 'DMAR|IOMMU' | head
+
+# Fresh hosts only — /etc/default/grub, add to GRUB_CMDLINE_LINUX_DEFAULT:
+#   Intel:  intel_iommu=on iommu=pt      AMD:  amd_iommu=on iommu=pt
+# then: sudo update-grub && sudo reboot
 ```
 
 ## 3. Move the WireGuard endpoint onto the host

@@ -12,6 +12,7 @@ only performs mechanical actions and reports capacity.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from dataclasses import dataclass
 
@@ -42,14 +43,18 @@ class Provisioner:
     async def destroy(self, *, name: str, mac: str, ip: str) -> None: ...
 
     async def wait_vnc(self, host: str, port: int, timeout: int) -> bool:
-        """Poll the in-guest VNC port until it answers or we time out."""
+        """Poll the in-guest VNC port until it answers or we time out.
+
+        This is how the state machine knows a clone actually reached a usable
+        desktop (TigerVNC up) rather than merely booting the kernel.
+        """
         deadline = asyncio.get_event_loop().time() + timeout
         while asyncio.get_event_loop().time() < deadline:
             try:
                 _, w = await asyncio.wait_for(
                     asyncio.open_connection(host, port), timeout=2)
                 w.close()
-                with _suppress():
+                with contextlib.suppress(Exception):
                     await w.wait_closed()
                 return True
             except (OSError, asyncio.TimeoutError):
@@ -194,10 +199,6 @@ class FakeProvisioner(Provisioner):
         return True  # pretend the desktop came up
 
 
-class _suppress:
-    def __enter__(self): return self
-    def __exit__(self, *a): return True
-
-
 def build_provisioner() -> Provisioner:
+    """Factory: the one place that decides real KVM vs the test double."""
     return FakeProvisioner() if settings.use_fake else LibvirtProvisioner()

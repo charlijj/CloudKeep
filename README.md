@@ -84,26 +84,38 @@ VM can reach the internet and nothing else. The acceptance test in
 
 ### Backend — `cloudkeep-controld` (`backend/src/`)
 
+Service-oriented design: `ControlPlane` (in `app.py`) is the composition root —
+it constructs the whole service graph and owns its lifecycle. There is no
+module-level mutable state; route handlers receive the control plane through
+FastAPI dependencies, so every service is swappable and testable in isolation
+(which is exactly how the `FakeProvisioner` slots in).
+
 | File | Responsibility |
 |---|---|
-| `app.py` | FastAPI assembly: auth, resources, VM CRUD + lifecycle, session, `/ws`, health |
+| `app.py` | `ControlPlane` composition root + FastAPI routes (auth, resources, VM lifecycle, `/ws`, health) |
 | `config.py` | Settings (libvirt, network, golden image, reserves, quotas, sizing bounds) |
-| `db.py` | SQLite (WAL): users/vms/pcie/audit + resource accounting |
-| `auth_core.py` | bcrypt, JWT, the VM-bound one-time `SessionStore` |
-| `resources.py` | live host capacity − reserve − allocations; quota admission |
-| `provisioner.py` | `LibvirtProvisioner` (real KVM) + `FakeProvisioner` (testing) |
-| `libvirt_xml.py` | injection-safe domain / overlay / DHCP-host XML |
-| `vmmanager.py` | lifecycle state machine, allocation lock, provisioning queue |
-| `vnc_bridge.py` | async TCP↔WebSocket byte relay (reused from v1, now per-VM target) |
+| `db.py` | `Database` — SQLite (WAL): users/vms/pcie/audit + resource accounting |
+| `auth_core.py` | `AuthService` (bcrypt + JWT) and the VM-bound one-time `SessionStore` |
+| `resources.py` | `ResourceTracker` — live host capacity − reserve − allocations; quota admission |
+| `provisioner.py` | `Provisioner` interface: `LibvirtProvisioner` (real KVM) / `FakeProvisioner` (testing) |
+| `libvirt_xml.py` | injection-safe domain / overlay / DHCP-host XML builders |
+| `vmmanager.py` | `VMManager` — lifecycle state machine, allocation lock, provisioning queue |
+| `vnc_bridge.py` | `VNCBridge` — async TCP↔WebSocket byte relay (reused from v1, per-VM target) |
 | `seed_user.py` | admin CLI to create/update users + quotas |
 | `run.py` | uvicorn entrypoint (uvloop, WS deflate off) |
 
 ### Frontend (`frontend/`)
 
-Single-page app, JWT in module memory only. Login → **dashboard** (VM cards with
-live state badges + Connect/Start/Stop/Delete) → **builder** (cores/RAM/disk
-sliders capped to `min(quota-left, host-free)`) → **viewer** (noVNC). noVNC ships
-as one pre-built bundle (`lib/novnc.bundle.js`).
+Single-page app, deliberately lightweight: no framework, no build step for the
+app itself (only noVNC is pre-bundled), one small stylesheet of reusable
+primitives. JWT lives in module memory only — never storage or URLs. All
+dynamic DOM is built with `createElement`/`textContent`, so server data never
+meets `innerHTML` (no XSS sink even via a hostile VM label).
+
+Views: login → **dashboard** (always-visible quota/host-free strip, VM cards
+with live state badges + Connect/Start/Stop/Delete, 3-second polling while
+anything is building) → **builder** (cores/RAM/disk sliders capped to
+`min(quota-left, host-free)`) → **viewer** (noVNC, full-bleed).
 
 ### System (`sys/`)
 

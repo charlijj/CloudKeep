@@ -113,6 +113,16 @@ class Database:
              max_disk_gb, _now()),
         )
 
+    def update_user(self, username: str, pw_hash: str, role: str,
+                    max_vms: int, max_vcpus: int, max_mem_mb: int,
+                    max_disk_gb: int) -> None:
+        self._exec(
+            "UPDATE users SET pw_hash=?, role=?, max_vms=?, max_vcpus=?, "
+            "max_mem_mb=?, max_disk_gb=? WHERE username=?",
+            (pw_hash, role, max_vms, max_vcpus, max_mem_mb, max_disk_gb,
+             username),
+        )
+
     # -- vms ---------------------------------------------------------------
     def create_vm(self, owner_id: int, label: str, vcpus: int, mem_mb: int,
                   disk_gb: int, mac: str, ip_addr: str, vnc_port: int) -> int:
