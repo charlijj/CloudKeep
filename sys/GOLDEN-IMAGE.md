@@ -92,6 +92,7 @@ DISK=$(virsh domblklist "$NAME" --details | awk '/disk/{print $4; exit}')
 sudo qemu-img convert -O qcow2 -c "$DISK" /var/lib/cloudkeep/images/golden-v1.qcow2
 sudo chown cloudkeep:cloudkeep /var/lib/cloudkeep/images/golden-v1.qcow2
 sudo chmod 0444 /var/lib/cloudkeep/images/golden-v1.qcow2   # never boot directly
+sudo restorecon -v /var/lib/cloudkeep/images/golden-v1.qcow2  # CentOS: virt_image_t (see HOSTSETUP §1.1)
 
 # Optional: retire the original domain definition (the template file is enough).
 virsh undefine "$NAME" --nvram
