@@ -146,6 +146,11 @@ sys/
 
 ## Getting started
 
+> **Host OS:** CentOS Stream 10 (RHEL family) — the host runbook uses `dnf`,
+> a single nftables ruleset (in place of firewalld), and accounts for SELinux
+> (sVirt). The Golden Image VM guest is Ubuntu 24.04. The control-plane Python
+> is OS-agnostic.
+
 1. **Host:** follow `sys/HOSTSETUP.md` (stack, WireGuard, `ckbr0` + firewall, pool, controld).
 2. **Golden image:** follow `sys/GOLDEN-IMAGE.md` to seal soccer-vision-vm into `golden-v1.qcow2`.
 3. **Users:** `seed_user.py <name> [--admin] [--max-* …]`.

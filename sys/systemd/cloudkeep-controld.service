@@ -14,8 +14,10 @@
 [Unit]
 Description=CloudKeep control plane (controld)
 Documentation=https://github.com/charlijj/CloudKeep
-After=network-online.target wg-quick@wg0.service libvirtd.service virtnetworkd.service
-Wants=network-online.target wg-quick@wg0.service libvirtd.service
+# Modular libvirt daemons (CentOS/RHEL 10) + libvirtd (Debian/mono) — After of a
+# non-existent unit is a harmless no-op, so listing both families is safe.
+After=network-online.target wg-quick@wg0.service libvirtd.service virtqemud.service virtnetworkd.service virtstoraged.service virtnwfilterd.service
+Wants=network-online.target wg-quick@wg0.service
 StartLimitIntervalSec=120
 StartLimitBurst=10
 

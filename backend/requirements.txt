@@ -2,6 +2,10 @@
 #
 # uvicorn[standard] pulls in uvloop + the websockets stack used by run.py.
 # libvirt-python talks to the host's libvirtd over qemu:///system.
+#
+# On RHEL/CentOS, prefer the distro `python3-libvirt` rpm + a venv created with
+# --system-site-packages (no compiler needed); install the rest of this file
+# excluding the libvirt-python line. See sys/HOSTSETUP.md §7.
 fastapi>=0.110
 uvicorn[standard]>=0.20
 bcrypt>=4.0
