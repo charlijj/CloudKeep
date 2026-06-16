@@ -153,6 +153,17 @@ config keeps `/.well-known/` reachable on port 80 so renewals succeed.
 
 Replace the bootstrap with the full config below, then reload.
 
+> **Your domain appears in 4 places — keep them identical** (the examples use
+> `cloudkeep.duckdns.org`; replace with yours, e.g. `cloudkeep-auth.duckdns.org`):
+> 1. HTTP redirect server → `server_name`
+> 2. HTTPS server → `server_name`
+> 3. HTTPS server → `ssl_certificate` + `ssl_certificate_key` (`live/<domain>/…`)
+> 4. `/app/` CSP → `connect-src … wss://<domain>` — **if this is wrong, login
+>    works but the VNC WebSocket is silently blocked by CSP.**
+>
+> Don't delete the two `ssl_certificate*` lines when editing — without them
+> nginx fails with `no "ssl_certificate" is defined for the "listen ... ssl"`.
+
 ```bash
 sudo tee /etc/nginx/sites-available/cloudkeep >/dev/null <<'EOF'
 # CloudKeep edge — TLS terminator + static SPA + /ck reverse proxy.
