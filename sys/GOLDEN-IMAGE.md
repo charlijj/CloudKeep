@@ -78,25 +78,49 @@ sudo apt install -y cloud-guest-utils    # provides growpart
 
 ## 3. Seal it into the template
 
-On the **host**:
+On the **host**. Two things bite here if you copy the naive version: `virsh
+shutdown` is **asynchronous** (you must wait for `shut off`, or QEMU still holds
+the disk lock and `qemu-img` fails with *"Failed to get shared write lock"*),
+and `virt-sysprep` lives in **`guestfs-tools`** (`dnf install -y guestfs-tools`).
+We convert first, then sysprep the *copy*, so the original stays bootable as a
+fallback.
 
 ```bash
+#!/bin/bash
+set -euo pipefail
 NAME=soccer-vision-vm
-virsh shutdown "$NAME"          # wait for it to power off
+GOLDEN=/var/lib/cloudkeep/images/golden-v1.qcow2
 
-# Strip identity: machine-id, SSH host keys, logs, leases, etc.
-sudo virt-sysprep -d "$NAME"
+# tooling + destination
+command -v virt-sysprep >/dev/null || sudo dnf install -y guestfs-tools
+sudo install -d -o cloudkeep -g cloudkeep /var/lib/cloudkeep/images
 
-# Convert (compress) into the immutable golden image used as the backing file.
+# shut down and WAIT for actual power-off (shutdown is async)
+if [ "$(virsh domstate "$NAME")" != "shut off" ]; then
+  virsh shutdown "$NAME" || true
+  for i in $(seq 1 60); do
+    [ "$(virsh domstate "$NAME")" = "shut off" ] && break; sleep 2
+  done
+  [ "$(virsh domstate "$NAME")" = "shut off" ] || virsh destroy "$NAME"   # force off
+fi
+
+# copy the disk into the immutable golden image (no lock now)
 DISK=$(virsh domblklist "$NAME" --details | awk '/disk/{print $4; exit}')
-sudo qemu-img convert -O qcow2 -c "$DISK" /var/lib/cloudkeep/images/golden-v1.qcow2
-sudo chown cloudkeep:cloudkeep /var/lib/cloudkeep/images/golden-v1.qcow2
-sudo chmod 0444 /var/lib/cloudkeep/images/golden-v1.qcow2   # never boot directly
-sudo restorecon -v /var/lib/cloudkeep/images/golden-v1.qcow2  # CentOS: virt_image_t (see HOSTSETUP §1.1)
+sudo qemu-img convert -O qcow2 -c "$DISK" "$GOLDEN"
 
-# Optional: retire the original domain definition (the template file is enough).
-virsh undefine "$NAME" --nvram
+# strip identity from the COPY (machine-id, SSH host keys, logs, leases, ...)
+# If libguestfs errors on its appliance: prefix LIBGUESTFS_BACKEND=direct
+sudo virt-sysprep -a "$GOLDEN"
+
+sudo chown cloudkeep:cloudkeep "$GOLDEN"
+sudo chmod 0444 "$GOLDEN"                                      # never boot directly
+sudo restorecon -v "$GOLDEN"                                  # CentOS: virt_image_t (HOSTSETUP §1.1)
+echo "golden image ready: $GOLDEN"
 ```
+
+> The original `soccer-vision-vm` domain is left intact (bootable fallback).
+> Once you've confirmed clones work, you may retire it: `virsh undefine
+> soccer-vision-vm --nvram`.
 
 `config.py` points `GOLDEN_IMAGE` at `/var/lib/cloudkeep/images/golden-v1.qcow2`.
 Per-VM overlays are created from it automatically by controld.
