@@ -54,7 +54,9 @@ Make the in-guest desktop clone-ready (as a user with sudo in soccer-vision-vm):
     `ckbr0`, so it must NOT bind loopback. Verify (after the service is up):
     `ss -ltn | grep 5901` should show `0.0.0.0:5901`, not `127.0.0.1:5901`.
   - `SecurityTypes=None` — safe because the guest firewall (below) only admits
-    the host bridge IP.
+    the host bridge IP. Note: with `localhost=no`, TigerVNC refuses to start an
+    unauthenticated listener unless the service passes `--I-KNOW-THIS-IS-INSECURE`
+    (the `cloudkeep-vnc.service` unit already does).
 - Install the in-guest VNC service so every clone starts it on boot:
   ```bash
   sudo cp sys/systemd/cloudkeep-vnc.service /etc/systemd/system/

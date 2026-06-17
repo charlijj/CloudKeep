@@ -24,9 +24,13 @@ Group=app
 # %H is the runtime hostname, which the first-boot unit sets per clone.
 PIDFile=/home/app/.vnc/%H:1.pid
 ExecStartPre=-/usr/bin/vncserver -kill :1
-# -localhost no: listen on the guest interface so the host gateway can reach it
-# (UFW restricts the actual exposure to the host bridge IP only).
-ExecStart=/usr/bin/vncserver :1 -localhost no
+# Clear stale X locks from a previously-killed session (else vncserver exits).
+ExecStartPre=-/bin/rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
+# -localhost no: listen on the guest interface so the host gateway can reach it.
+# --I-KNOW-THIS-IS-INSECURE: TigerVNC refuses SecurityTypes=None on a non-loopback
+# listener without this ack. Safe here — the guest UFW admits 5901 only from the
+# host bridge (10.20.0.1), and controld (the sole client) enforces auth upstream.
+ExecStart=/usr/bin/vncserver :1 -localhost no --I-KNOW-THIS-IS-INSECURE
 ExecStop=/usr/bin/vncserver -kill :1
 Restart=on-failure
 RestartSec=5
