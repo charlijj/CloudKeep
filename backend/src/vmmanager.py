@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import secrets
 
 from auth_core import Binding, SessionStore
 from config import settings
@@ -70,14 +69,18 @@ class VMManager:
         return vm
 
     def _alloc_mac_ip(self) -> tuple[str, str]:
-        used_macs, used_ips = self._db.used_macs(), self._db.used_ips()
-        while True:
-            mac = "52:54:00:%02x:%02x:%02x" % tuple(secrets.randbits(8) for _ in range(3))
-            if mac not in used_macs:
-                break
+        # Stable MAC derived from the IP. Reusing an address across rebuilds
+        # then reuses the same MAC, so the host's ARP/neighbour cache and
+        # dnsmasq's lease for that IP stay consistent. A fresh *random* MAC on a
+        # recycled IP leaves a stale neighbour entry on the host (it dials the
+        # old MAC), so the VNC connect intermittently fails with "VNC did not
+        # come up in time". The IP is unique among live VMs, so the MAC is too.
+        used_ips = self._db.used_ips()
         for host in range(settings.GUEST_IP_START, settings.GUEST_IP_END + 1):
             ip = f"{settings.GUEST_NET_PREFIX}.{host}"
             if ip not in used_ips:
+                o = [int(x) for x in ip.split(".")]
+                mac = "52:54:00:%02x:%02x:%02x" % (o[1], o[2], o[3])
                 return mac, ip
         raise Conflict("no free guest IP addresses")
 
