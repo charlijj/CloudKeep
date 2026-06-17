@@ -1,15 +1,18 @@
 # cloudkeep-controld runtime dependencies (KVM host).
 #
 # uvicorn[standard] pulls in uvloop + the websockets stack used by run.py.
-# libvirt-python talks to the host's libvirtd over qemu:///system.
 #
-# On RHEL/CentOS, prefer the distro `python3-libvirt` rpm + a venv created with
-# --system-site-packages (no compiler needed); install the rest of this file
-# excluding the libvirt-python line. See sys/HOSTSETUP.md §7.
+# libvirt-python is deliberately NOT listed here: building it from PyPI needs
+# libvirt's dev headers (pkg-config 'libvirt'), which aren't present on a stock
+# host and fails the whole install. Install the distro binding instead and let
+# the venv see it (no compiler):
+#   RHEL/CentOS:    sudo dnf install python3-libvirt
+#   Debian/Ubuntu:  sudo apt install python3-libvirt
+# then create the venv with --system-site-packages (or set
+# include-system-site-packages=true in pyvenv.cfg). See backend/BACKEND-SETUP.md.
 fastapi>=0.110
 uvicorn[standard]>=0.20
 bcrypt>=4.0
 python-jose[cryptography]>=3.3
 slowapi>=0.1.9
 pydantic-settings>=2.1
-libvirt-python>=10.0
