@@ -23,7 +23,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -220,9 +220,11 @@ async def stop_vm(vm_id: int, user: dict = Depends(current_user),
 
 @app.delete("/vms/{vm_id}")
 async def delete_vm(vm_id: int, user: dict = Depends(current_user),
-                    cp: ControlPlane = Depends(get_cp)) -> JSONResponse:
+                    cp: ControlPlane = Depends(get_cp)) -> Response:
     await _translate_async(cp.manager.delete_vm(user, vm_id))
-    return JSONResponse(status_code=204, content=None)
+    # 204 must carry no body — a JSONResponse(content=None) would emit `null`
+    # and trip "Response content longer than Content-Length".
+    return Response(status_code=204)
 
 
 @app.post("/vms/{vm_id}/session")
