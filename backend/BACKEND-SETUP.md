@@ -98,11 +98,17 @@ overlays in the image pool there too. On CentOS the image path **must** carry th
 `virt_image_t` SELinux label or sVirt blocks VM disks (see `HOSTSETUP.md` §1.1).
 
 ```bash
-sudo install -d -o app -g app -m 0700 /var/lib/cloudkeep/db /var/lib/cloudkeep/images
+sudo install -d -o app -g app -m 0755 /var/lib/cloudkeep          # traversable by qemu
+sudo install -d -o app -g app -m 0700 /var/lib/cloudkeep/db       # private (user table)
+sudo install -d -o app -g app -m 0711 /var/lib/cloudkeep/images   # libvirt pool
 sudo dnf install -y policycoreutils-python-utils      # provides semanage
 sudo semanage fcontext -a -t virt_image_t "/var/lib/cloudkeep/images(/.*)?"
 sudo restorecon -Rv /var/lib/cloudkeep/images
 ```
+
+> Keep the **parent `0755`** (or at least `o+x`): on real libvirt the `qemu`
+> user must traverse `/var/lib/cloudkeep` to open VM disks under `images/`. A
+> `0700` parent would `Permission denied` both the controld DB write and qemu.
 
 ## 4. Configuration (`.env`)
 
