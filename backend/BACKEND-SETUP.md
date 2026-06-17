@@ -58,6 +58,27 @@ python -c "import fastapi, uvicorn, uvloop, bcrypt, jose, slowapi, pydantic_sett
 > host's libvirt version, so the distro rpm is the reliable source. Everything
 > else stays isolated in the venv.
 
+**Troubleshooting `ModuleNotFoundError: No module named 'libvirt'`** (the venv
+can't see the binding — almost always the rpm isn't installed or the venv flag
+isn't set). Diagnose in order:
+
+```bash
+rpm -q python3-libvirt || sudo dnf install -y python3-libvirt          # 1. installed?
+/usr/bin/python3 -c "import libvirt; print(libvirt.getVersion())"      # 2. system can import?
+grep '^include-system-site-packages' /opt/cloudkeep/.venv/pyvenv.cfg   # 3. should be '= true'
+/opt/cloudkeep/.venv/bin/python -c "import libvirt; print(libvirt.getVersion())"  # 4. venv can import?
+```
+
+- Step 2 fails → rpm missing (step 1 fixes it).
+- Step 2 works, step 4 fails → flip the flag in step 3 to `= true` (no
+  reactivation needed; it's read at interpreter startup).
+- Still failing → recreate the venv with the flag baked in:
+  `rm -rf /opt/cloudkeep/.venv && python3 -m venv --system-site-packages
+  /opt/cloudkeep/.venv` then redo the pip step above.
+
+> Note: `pip install libvirt` does **not** work — there is no PyPI package by
+> that name (the buildable one is `libvirt-python`, which we deliberately avoid).
+
 ## 2. Give the `app` user libvirt access
 
 controld talks to `qemu:///system`, which requires membership in the `libvirt`
