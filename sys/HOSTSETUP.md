@@ -42,7 +42,10 @@ sudo systemctl enable --now virtqemud.socket virtnetworkd.socket \
 
 # Unprivileged service user for controld (in libvirt + kvm/qemu groups)
 sudo useradd -r -m -d /var/lib/cloudkeep -s /sbin/nologin -G libvirt,kvm cloudkeep
-sudo install -d -o cloudkeep -g cloudkeep -m 0700 /var/lib/cloudkeep/db /var/lib/cloudkeep/images
+# Parent stays traversable (qemu must reach disks under images/); db is private.
+sudo install -d -o cloudkeep -g cloudkeep -m 0755 /var/lib/cloudkeep
+sudo install -d -o cloudkeep -g cloudkeep -m 0700 /var/lib/cloudkeep/db
+sudo install -d -o cloudkeep -g cloudkeep -m 0711 /var/lib/cloudkeep/images
 virsh -c qemu:///system list --all      # sanity
 ```
 
