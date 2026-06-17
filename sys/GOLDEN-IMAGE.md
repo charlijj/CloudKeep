@@ -34,6 +34,19 @@ rm -f /etc/systemd/system/cloudkeep-firstboot.service`.
 
 Make the in-guest desktop clone-ready (as a user with sudo in soccer-vision-vm):
 
+> **If this VM is a v1 single-VM gateway** (it ran the gateway + WireGuard
+> inside itself), strip that first — v2 runs the gateway on the HOST, and a
+> leftover in-guest gateway bakes the old `JWT_SECRET` and the `10.10.10.2`
+> tunnel address into every clone:
+> ```bash
+> sudo systemctl disable --now cloudkeep-gateway.service
+> sudo rm -f /etc/systemd/system/cloudkeep-gateway.service
+> sudo rm -rf /opt/rdgateway                     # v1 gateway code + its .env
+> sudo systemctl disable --now wg-quick@wg0 2>/dev/null || true
+> sudo rm -f /etc/wireguard/wg0.conf
+> sudo systemctl daemon-reload
+> ```
+
 - **TigerVNC** serves XFCE on `:1` (5901). Session config is in
   `~app/.vnc/{config,xstartup,tigervnc.conf}` (in this repo under `sys/vnc/` —
   copy them into the guest). Two settings are load-bearing for v2:
