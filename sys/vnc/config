@@ -1,6 +1,9 @@
 session=xfce
 geometry=1280x800
-localhost=yes
+# v2: the gateway (controld) runs on the HOST and reaches this VNC over ckbr0,
+# so TigerVNC must listen on the guest's network interface, NOT loopback.
+# Guest UFW restricts 5901 to the host bridge IP (10.20.0.1) — see GOLDEN-IMAGE.md.
+localhost=no
 SecurityTypes=None
 ZlibLevel=1
 AlwaysShared=1
