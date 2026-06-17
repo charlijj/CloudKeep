@@ -16,8 +16,13 @@ clone-ready:
 
 - **TigerVNC** serves XFCE on `:1` (5901). The session config lives in
   `~app/.vnc/{config,xstartup,tigervnc.conf}` (already in this repo under
-  `sys/vnc/`). `config` keeps `SecurityTypes=None` — safe because only the host
-  gateway can reach 5901 (firewall below).
+  `sys/vnc/`). Two settings are load-bearing for v2:
+  - `localhost=no` — controld is on the **host** and reaches this VNC over
+    `ckbr0`, so it must NOT bind loopback (this changed from the v1 in-guest
+    gateway). Verify with `ss -ltn | grep 5901` inside a booted clone: it should
+    show `0.0.0.0:5901`, not `127.0.0.1:5901`.
+  - `SecurityTypes=None` — safe because the guest firewall (below) only admits
+    the host bridge IP.
 - Install the in-guest VNC service so every clone starts it on boot:
   ```bash
   sudo cp /path/to/repo/sys/systemd/cloudkeep-vnc.service /etc/systemd/system/
