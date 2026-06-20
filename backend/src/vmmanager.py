@@ -37,6 +37,7 @@ class VMManager:
         self._alloc_lock = asyncio.Lock()       # guards check-then-reserve
         self._queue: asyncio.Queue[int] = asyncio.Queue()
         self._worker: asyncio.Task | None = None
+        self._pending: set[asyncio.Task] = set()  # off-worker VNC-readiness waits
 
     # -- worker lifecycle --------------------------------------------------
     async def start(self) -> None:
@@ -69,6 +70,14 @@ class VMManager:
     async def stop(self) -> None:
         if self._worker:
             self._worker.cancel()
+        for t in list(self._pending):
+            t.cancel()
+
+    def _spawn(self, coro) -> None:
+        """Run a coroutine off the worker, keeping a reference so it isn't GC'd."""
+        t = asyncio.create_task(coro)
+        self._pending.add(t)
+        t.add_done_callback(self._pending.discard)
 
     async def _run(self) -> None:
         while True:
@@ -141,6 +150,11 @@ class VMManager:
         return _public(self._db.get_vm(vm_id), self._is_admin(user))
 
     async def _provision(self, vm_id: int) -> None:
+        # Runs on the single worker. Only the disk-bound clone/define/boot is
+        # serialised here; the VNC-readiness poll is handed off so the next
+        # build's clone isn't blocked behind this one's up-to-PROVISION_TIMEOUT_S
+        # wait. The vm dict's fields used downstream (id/owner/name/mac/ip/port)
+        # are immutable for the VM's life, so the snapshot is safe to pass on.
         vm = self._db.get_vm(vm_id)
         if vm is None or vm["state"] != REQUESTED:
             return
@@ -149,21 +163,33 @@ class VMManager:
             await self._prov.create(name=vm["name"], vcpus=vm["vcpus"],
                                     mem_mb=vm["mem_mb"], disk_gb=vm["disk_gb"],
                                     mac=vm["mac"], ip=vm["ip_addr"])
-            ready = await self._prov.wait_vnc(vm["ip_addr"], vm["vnc_port"],
-                                              settings.PROVISION_TIMEOUT_S)
-            if not ready:
-                raise TimeoutError("VNC did not come up in time")
-            self._db.set_state(vm_id, RUNNING)
-            self._db.audit(vm["owner_id"], "vm.running", vm["name"])
-            logger.info("provisioned %s -> %s:%s", vm["name"],
-                        vm["ip_addr"], vm["vnc_port"])
         except Exception as exc:
-            logger.exception("provision failed %s", vm["name"])
-            with contextlib.suppress(Exception):
-                await self._prov.destroy(name=vm["name"], mac=vm["mac"],
-                                         ip=vm["ip_addr"])
-            self._db.set_state(vm_id, ERROR, str(exc)[:200])
-            self._db.audit(vm["owner_id"], "vm.error", f"{vm['name']}: {exc}")
+            logger.exception("provision (create) failed %s", vm["name"])
+            await self._fail(vm, exc)
+            return
+        self._spawn(self._await_ready(vm))
+
+    async def _await_ready(self, vm: dict) -> None:
+        try:
+            if not await self._prov.wait_vnc(vm["ip_addr"], vm["vnc_port"],
+                                             settings.PROVISION_TIMEOUT_S):
+                raise TimeoutError("VNC did not come up in time")
+        except Exception as exc:
+            logger.exception("provision (wait) failed %s", vm["name"])
+            await self._fail(vm, exc)
+            return
+        self._db.set_state(vm["id"], RUNNING)
+        self._db.audit(vm["owner_id"], "vm.running", vm["name"])
+        logger.info("provisioned %s -> %s:%s",
+                    vm["name"], vm["ip_addr"], vm["vnc_port"])
+
+    async def _fail(self, vm: dict, exc: Exception) -> None:
+        """Roll back a failed provision: best-effort teardown, then mark ERROR."""
+        with contextlib.suppress(Exception):
+            await self._prov.destroy(name=vm["name"], mac=vm["mac"],
+                                     ip=vm["ip_addr"])
+        self._db.set_state(vm["id"], ERROR, str(exc)[:200])
+        self._db.audit(vm["owner_id"], "vm.error", f"{vm['name']}: {exc}")
 
     async def start_vm(self, user: dict, vm_id: int) -> dict:
         vm = self._require(user, vm_id)

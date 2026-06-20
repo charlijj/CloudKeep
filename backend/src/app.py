@@ -197,6 +197,14 @@ async def get_resources(user: dict = Depends(current_user),
     return await cp.tracker.snapshot(user)
 
 
+@app.get("/dashboard")
+async def dashboard(user: dict = Depends(current_user),
+                    cp: ControlPlane = Depends(get_cp)) -> dict:
+    """VMs + resources in one round-trip (the SPA polls both together)."""
+    return {"vms": cp.manager.list_vms(user),
+            "resources": await cp.tracker.snapshot(user)}
+
+
 # ---- VM lifecycle ----------------------------------------------------------
 @app.get("/vms")
 async def list_vms(user: dict = Depends(current_user),
