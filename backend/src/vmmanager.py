@@ -17,6 +17,7 @@ from config import settings
 from db import Database
 from provisioner import Provisioner
 from resources import ResourceTracker, QuotaError
+from states import DELETING, ERROR, PROVISIONING, REQUESTED, RUNNING, STOPPED
 
 logger = logging.getLogger("cloudkeep.manager")
 
@@ -36,18 +37,47 @@ class VMManager:
         self._alloc_lock = asyncio.Lock()       # guards check-then-reserve
         self._queue: asyncio.Queue[int] = asyncio.Queue()
         self._worker: asyncio.Task | None = None
+        self._pending: set[asyncio.Task] = set()  # off-worker VNC-readiness waits
 
     # -- worker lifecycle --------------------------------------------------
     async def start(self) -> None:
         self._worker = asyncio.create_task(self._run())
-        # Any VM left mid-provision by a restart is unreachable -> mark ERROR.
+        await self._reconcile()
+
+    async def _reconcile(self) -> None:
+        """Sync DB state with libvirt reality on startup.
+
+        A VM left mid-provision by a restart is unreachable -> ERROR. A RUNNING
+        VM whose domain is gone (e.g. host reboot) -> STOPPED, so the UI doesn't
+        lie and the user can start it again; a STOPPED VM that is somehow active
+        -> RUNNING.
+        """
         for vm in self._db.list_vms():
-            if vm["state"] in ("REQUESTED", "PROVISIONING"):
-                self._db.set_state(vm["id"], "ERROR", "interrupted by restart")
+            st = vm["state"]
+            if st in (REQUESTED, PROVISIONING):
+                self._db.set_state(vm["id"], ERROR, "interrupted by restart")
+                continue
+            if st in (RUNNING, STOPPED):
+                try:
+                    active = await self._prov.is_active(vm["name"])
+                except Exception:
+                    continue                 # libvirt unreachable -> leave as-is
+                if st == RUNNING and not active:
+                    self._db.set_state(vm["id"], STOPPED)
+                elif st == STOPPED and active:
+                    self._db.set_state(vm["id"], RUNNING)
 
     async def stop(self) -> None:
         if self._worker:
             self._worker.cancel()
+        for t in list(self._pending):
+            t.cancel()
+
+    def _spawn(self, coro) -> None:
+        """Run a coroutine off the worker, keeping a reference so it isn't GC'd."""
+        t = asyncio.create_task(coro)
+        self._pending.add(t)
+        t.add_done_callback(self._pending.discard)
 
     async def _run(self) -> None:
         while True:
@@ -60,13 +90,27 @@ class VMManager:
                 self._queue.task_done()
 
     # -- helpers -----------------------------------------------------------
+    @staticmethod
+    def _is_admin(user: dict) -> bool:
+        return user.get("role") == "admin"
+
     def _require(self, user: dict, vm_id: int) -> dict:
         vm = self._db.get_vm(vm_id)
         if vm is None:
             raise NotFound("no such VM")
-        if vm["owner_id"] != user["id"] and user["role"] != "admin":
+        if vm["owner_id"] != user["id"] and not self._is_admin(user):
             raise Forbidden("not your VM")
         return vm
+
+    async def _wait_off(self, name: str, timeout: int) -> bool:
+        """Poll until the domain is powered off, or timeout. True if it stopped."""
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
+            if not await self._prov.is_active(name):
+                return True
+            await asyncio.sleep(2)
+        return False
 
     def _alloc_mac_ip(self) -> tuple[str, str]:
         # Stable MAC derived from the IP. Reusing an address across rebuilds
@@ -86,11 +130,12 @@ class VMManager:
 
     # -- public API --------------------------------------------------------
     def list_vms(self, user: dict) -> list[dict]:
-        rows = self._db.list_vms(None if user["role"] == "admin" else user["id"])
-        return [_public(v) for v in rows]
+        is_admin = self._is_admin(user)
+        rows = self._db.list_vms(None if is_admin else user["id"])
+        return [_public(v, is_admin) for v in rows]
 
     def get_vm(self, user: dict, vm_id: int) -> dict:
-        return _public(self._require(user, vm_id))
+        return _public(self._require(user, vm_id), self._is_admin(user))
 
     async def request_vm(self, user: dict, label: str, vcpus: int,
                          mem_mb: int, disk_gb: int) -> dict:
@@ -102,75 +147,109 @@ class VMManager:
         self._db.audit(user["id"], "vm.request",
                        f"vm-{vm_id} {vcpus}c/{mem_mb}M/{disk_gb}G")
         await self._queue.put(vm_id)
-        return _public(self._db.get_vm(vm_id))
+        return _public(self._db.get_vm(vm_id), self._is_admin(user))
 
     async def _provision(self, vm_id: int) -> None:
+        # Runs on the single worker. Only the disk-bound clone/define/boot is
+        # serialised here; the VNC-readiness poll is handed off so the next
+        # build's clone isn't blocked behind this one's up-to-PROVISION_TIMEOUT_S
+        # wait. The vm dict's fields used downstream (id/owner/name/mac/ip/port)
+        # are immutable for the VM's life, so the snapshot is safe to pass on.
         vm = self._db.get_vm(vm_id)
-        if vm is None or vm["state"] != "REQUESTED":
+        if vm is None or vm["state"] != REQUESTED:
             return
-        self._db.set_state(vm_id, "PROVISIONING")
+        self._db.set_state(vm_id, PROVISIONING)
         try:
             await self._prov.create(name=vm["name"], vcpus=vm["vcpus"],
                                     mem_mb=vm["mem_mb"], disk_gb=vm["disk_gb"],
                                     mac=vm["mac"], ip=vm["ip_addr"])
-            ready = await self._prov.wait_vnc(vm["ip_addr"], vm["vnc_port"],
-                                              settings.PROVISION_TIMEOUT_S)
-            if not ready:
-                raise TimeoutError("VNC did not come up in time")
-            self._db.set_state(vm_id, "RUNNING")
-            self._db.audit(vm["owner_id"], "vm.running", vm["name"])
-            logger.info("provisioned %s -> %s:%s", vm["name"],
-                        vm["ip_addr"], vm["vnc_port"])
         except Exception as exc:
-            logger.exception("provision failed %s", vm["name"])
-            with contextlib.suppress(Exception):
-                await self._prov.destroy(name=vm["name"], mac=vm["mac"],
-                                         ip=vm["ip_addr"])
-            self._db.set_state(vm_id, "ERROR", str(exc)[:200])
-            self._db.audit(vm["owner_id"], "vm.error", f"{vm['name']}: {exc}")
+            logger.exception("provision (create) failed %s", vm["name"])
+            await self._fail(vm, exc)
+            return
+        self._spawn(self._await_ready(vm))
+
+    async def _await_ready(self, vm: dict) -> None:
+        try:
+            if not await self._prov.wait_vnc(vm["ip_addr"], vm["vnc_port"],
+                                             settings.PROVISION_TIMEOUT_S):
+                raise TimeoutError("VNC did not come up in time")
+        except Exception as exc:
+            logger.exception("provision (wait) failed %s", vm["name"])
+            await self._fail(vm, exc)
+            return
+        self._db.set_state(vm["id"], RUNNING)
+        self._db.audit(vm["owner_id"], "vm.running", vm["name"])
+        logger.info("provisioned %s -> %s:%s",
+                    vm["name"], vm["ip_addr"], vm["vnc_port"])
+
+    async def _fail(self, vm: dict, exc: Exception) -> None:
+        """Roll back a failed provision: best-effort teardown, then mark ERROR."""
+        with contextlib.suppress(Exception):
+            await self._prov.destroy(name=vm["name"], mac=vm["mac"],
+                                     ip=vm["ip_addr"])
+        self._db.set_state(vm["id"], ERROR, str(exc)[:200])
+        self._db.audit(vm["owner_id"], "vm.error", f"{vm['name']}: {exc}")
 
     async def start_vm(self, user: dict, vm_id: int) -> dict:
         vm = self._require(user, vm_id)
-        if vm["state"] != "STOPPED":
+        if vm["state"] != STOPPED:
             raise Conflict(f"cannot start a VM in state {vm['state']}")
         async with self._alloc_lock:
             await self._tracker.check_resume(vm["vcpus"], vm["mem_mb"])
-            self._db.set_state(vm_id, "RUNNING")
+            self._db.set_state(vm_id, RUNNING)
         try:
             await self._prov.start(vm["name"])
         except Exception as exc:
-            self._db.set_state(vm_id, "ERROR", str(exc)[:200])
+            self._db.set_state(vm_id, ERROR, str(exc)[:200])
             raise Conflict(f"start failed: {exc}")
         self._db.audit(user["id"], "vm.start", vm["name"])
-        return _public(self._db.get_vm(vm_id))
+        return _public(self._db.get_vm(vm_id), self._is_admin(user))
 
     async def stop_vm(self, user: dict, vm_id: int) -> dict:
         vm = self._require(user, vm_id)
-        if vm["state"] != "RUNNING":
+        if vm["state"] != RUNNING:
             raise Conflict(f"cannot stop a VM in state {vm['state']}")
-        await self._prov.stop(vm["name"])
-        self._db.set_state(vm_id, "STOPPED")
+        await self._prov.stop(vm["name"])               # graceful ACPI
+        # Confirm power-off before freeing RAM/CPU in the accounting; force if
+        # the guest ignored ACPI, else the pool would treat the RAM as free
+        # while the VM is still running.
+        if not await self._wait_off(vm["name"], settings.STOP_TIMEOUT_S):
+            await self._prov.force_off(vm["name"])
+        self._db.set_state(vm_id, STOPPED)
         self._db.audit(user["id"], "vm.stop", vm["name"])
-        return _public(self._db.get_vm(vm_id))
+        return _public(self._db.get_vm(vm_id), self._is_admin(user))
 
     async def delete_vm(self, user: dict, vm_id: int) -> None:
         vm = self._require(user, vm_id)
-        self._db.set_state(vm_id, "DELETING")
+        # Block delete mid-build: the worker is still creating the domain/overlay
+        # and would race the teardown. ERROR/RUNNING/STOPPED are all deletable.
+        if vm["state"] in (REQUESTED, PROVISIONING):
+            raise Conflict("cannot delete a VM while it is being built")
+        self._db.set_state(vm_id, DELETING)
         await self._prov.destroy(name=vm["name"], mac=vm["mac"], ip=vm["ip_addr"])
         self._db.delete_vm(vm_id)
         self._db.audit(user["id"], "vm.delete", vm["name"])
 
     def mint_session(self, user: dict, vm_id: int) -> str:
         vm = self._require(user, vm_id)
-        if vm["state"] != "RUNNING":
+        if vm["state"] != RUNNING:
             raise Conflict("VM is not running")
         return self._sessions.issue(Binding(
             username=user["username"], vm_id=vm_id,
             host=vm["ip_addr"], port=vm["vnc_port"]))
 
 
-def _public(vm: dict) -> dict:
-    """The VM fields safe to return to the browser (no MAC/internal IP)."""
-    return {k: vm[k] for k in
-            ("id", "label", "vcpus", "mem_mb", "disk_gb", "state",
-             "error_msg", "created_at")}
+def _public(vm: dict, is_admin: bool = False) -> dict:
+    """VM fields safe to return to the browser (no MAC/internal IP).
+
+    Non-admins get a generic error message so provisioning internals (host
+    paths, libvirt detail) aren't disclosed; the full message stays in the logs
+    and the audit table for operators.
+    """
+    d = {k: vm[k] for k in
+         ("id", "label", "vcpus", "mem_mb", "disk_gb", "state",
+          "error_msg", "created_at")}
+    if d["error_msg"] and not is_admin:
+        d["error_msg"] = "Provisioning failed — contact an administrator."
+    return d

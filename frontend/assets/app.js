@@ -112,10 +112,10 @@ function stopPolling() {
 async function refresh() {
     clearError('dashboard-error');
     try {
-        const [vmsRes, resRes] = await Promise.all([api('/vms'), api('/resources')]);
-        const { vms } = await vmsRes.json();
+        const res = await api('/dashboard');           // VMs + resources, one round-trip
+        const { vms, resources } = await res.json();
         renderVMs(vms);
-        renderResources(await resRes.json());
+        renderResources(resources);
         // Poll while anything is mid-build so cards flip to ready by themselves.
         const busy = vms.some(v => v.state === 'PROVISIONING' || v.state === 'REQUESTED' || v.state === 'DELETING');
         if (busy && !pollTimer) pollTimer = setInterval(refresh, 3000);
@@ -280,8 +280,8 @@ async function connect(vmId) {
     await new Promise(r => requestAnimationFrame(r));  // let #screen get height
 
     rfb = new RFB($('screen'), `wss://${location.host}/ck/ws?session_token=${session_token}`, {});
-    rfb.scaleViewport = true;
-    rfb.resizeSession = false;
+    rfb.resizeSession = true;    // ask the guest to match the browser canvas -> crisp, native-res desktop
+    rfb.scaleViewport = true;    // fallback: scale the framebuffer if the server can't resize
     rfb.qualityLevel = 6;        // Tight+JPEG bytes-vs-quality dial
     rfb.compressionLevel = 6;
 

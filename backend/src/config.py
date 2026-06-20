@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     GOLDEN_IMAGE: str = "/var/lib/cloudkeep/images/golden-v1.qcow2"
     OS_VARIANT: str = "ubuntu24.04"
     PROVISION_TIMEOUT_S: int = 180      # wait for VNC ready before ERROR
+    STOP_TIMEOUT_S: int = 20            # graceful ACPI shutdown wait before force-off
 
     # --- Guest network (isolated; VMs get a deterministic lease here) ---
     GUEST_NET_PREFIX: str = "10.20.0"   # /24
