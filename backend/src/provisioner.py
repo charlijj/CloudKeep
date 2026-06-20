@@ -39,7 +39,9 @@ class Provisioner:
     async def create(self, *, name: str, vcpus: int, mem_mb: int, disk_gb: int,
                      mac: str, ip: str) -> None: ...
     async def start(self, name: str) -> None: ...
-    async def stop(self, name: str) -> None: ...
+    async def stop(self, name: str) -> None: ...           # graceful ACPI
+    async def force_off(self, name: str) -> None: ...      # hard power-off
+    async def is_active(self, name: str) -> bool: ...      # is the domain running?
     async def destroy(self, *, name: str, mac: str, ip: str) -> None: ...
 
     async def wait_vnc(self, host: str, port: int, timeout: int) -> bool:
@@ -134,6 +136,14 @@ class LibvirtProvisioner(Provisioner):
                 dom.destroy()
         await self._run(_off)
 
+    async def is_active(self, name) -> bool:
+        def _act():
+            try:
+                return bool(self._conn.lookupByName(name).isActive())
+            except self._libvirt.libvirtError:
+                return False    # domain gone -> not active
+        return await self._run(_act)
+
     async def destroy(self, *, name, mac, ip) -> None:
         def _destroy():
             lv = self._libvirt
@@ -190,6 +200,13 @@ class FakeProvisioner(Provisioner):
     async def stop(self, name) -> None:
         await asyncio.sleep(0.5)
         self._domains[name] = "stopped"
+
+    async def force_off(self, name) -> None:
+        await asyncio.sleep(0.1)
+        self._domains[name] = "stopped"
+
+    async def is_active(self, name) -> bool:
+        return self._domains.get(name) == "running"
 
     async def destroy(self, *, name, mac, ip) -> None:
         await asyncio.sleep(0.5)

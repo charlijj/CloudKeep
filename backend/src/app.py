@@ -265,6 +265,14 @@ async def ws_vnc(websocket: WebSocket) -> None:
     cp: ControlPlane = websocket.app.state.cp
     token = websocket.query_params.get("session_token", "")
     ip = websocket.client.host if websocket.client else "unknown"
+    # Defense-in-depth against cross-site WebSocket hijacking: the browser sends
+    # Origin = the SPA's page origin, which must match our single allowed origin.
+    # Checked before consuming the token so a bad-origin attempt can't burn it.
+    if websocket.headers.get("origin") != settings.ALLOWED_ORIGIN:
+        logger.warning("ws rejected ip=%s reason=bad_origin origin=%s",
+                       ip, websocket.headers.get("origin"))
+        await websocket.close(code=4403)
+        return
     binding = cp.sessions.consume(token)         # single-use, VM-bound
     if binding is None:
         logger.warning("ws rejected ip=%s reason=invalid_session_token", ip)
