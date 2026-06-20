@@ -173,13 +173,16 @@ sudo -u app sed -i 's#^LIBVIRT_URI=fake#LIBVIRT_URI=qemu:///system#' \
 
 ## 7. Install the systemd service
 
-A hardened unit tailored to this layout (`app` user, this venv/paths). It
-mirrors `sys/systemd/cloudkeep-controld.service`, with the paths/user adjusted.
+The canonical unit lives in the repo at `sys/systemd/cloudkeep-controld.service`.
+If you have the full repo on the host, `sudo cp` it into `/etc/systemd/system/`.
+Otherwise paste it (this is the same content, tailored to the `app` /
+`/opt/cloudkeep/backend/src` / `/opt/cloudkeep/.venv` layout):
 
 ```bash
 sudo tee /etc/systemd/system/cloudkeep-controld.service >/dev/null <<'EOF'
 [Unit]
 Description=CloudKeep control plane (controld)
+Documentation=https://github.com/charlijj/CloudKeep
 After=network-online.target wg-quick@wg0.service libvirtd.service virtqemud.service virtnetworkd.service virtstoraged.service virtnwfilterd.service
 Wants=network-online.target wg-quick@wg0.service
 StartLimitIntervalSec=120
@@ -230,6 +233,8 @@ UMask=0077
 WantedBy=multi-user.target
 EOF
 
+# Stop the manual run first so both don't bind 10.10.10.2:8000:
+#   (Ctrl-C the foreground `python run.py`)
 sudo systemctl daemon-reload
 sudo systemctl enable --now cloudkeep-controld.service
 systemctl status cloudkeep-controld --no-pager
