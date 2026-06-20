@@ -205,6 +205,18 @@ const sliders = {
 for (const s of Object.values(sliders))
     s.input.addEventListener('input', () => { s.output.textContent = s.toUnits(s.input.value); });
 
+// -/+ steppers: nudge the matching slider by one step, clamped to its range.
+// Gives precise control even though the slider track itself is short.
+for (const btn of document.querySelectorAll('.step')) {
+    btn.addEventListener('click', () => {
+        const s = sliders[btn.dataset.slider];
+        const step = Number(s.input.step) || 1;
+        const next = Number(s.input.value) + Number(btn.dataset.dir) * step;
+        s.input.value = Math.min(Number(s.input.max), Math.max(Number(s.input.min), next));
+        s.output.textContent = s.toUnits(s.input.value);
+    });
+}
+
 $('build-toggle').addEventListener('click', () => {
     const builder = $('builder');
     builder.hidden = !builder.hidden;

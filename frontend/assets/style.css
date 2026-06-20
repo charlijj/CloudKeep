@@ -31,13 +31,9 @@ main { flex: 1; padding: 40px 0; }
 .brand-mark { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
               border: 1px solid var(--border); border-radius: 5px; background: var(--surface); font-size: 12px; }
 .brand-name { font-size: 13px; }
-.site-footer { border-top: 1px solid var(--border); padding: 16px 0; color: var(--text-muted); font-size: 12px; }
 .section-header { padding-bottom: 10px; margin-bottom: 20px; border-bottom: 1px solid var(--border-soft); }
 .section-header--row { display: flex; align-items: center; justify-content: space-between; }
 .section-title { font-size: 15px; }
-.hero { margin-bottom: 48px; }
-.hero-title { font-size: 28px; margin-bottom: 8px; }
-.hero-tagline { color: var(--text-muted); }
 
 /* ---------- primitives ---------- */
 .btn { font: 13px var(--mono); color: var(--text); background: var(--surface-2);
@@ -102,4 +98,39 @@ body[data-view="viewer"] .site-header, body[data-view="viewer"] main { display: 
 .viewer-screen { flex: 1; min-height: 0; background: #000; overflow: hidden; position: relative; }
 .viewer-screen > :first-child { width: 100% !important; height: 100% !important; }
 
-@media (max-width: 600px) { main { padding: 28px 0; } .hero-title { font-size: 22px; } }
+@media (max-width: 600px) { main { padding: 28px 0; } .landing-banner-title { font-size: 19px; } }
+
+/* ---------- landing page ---------- */
+.landing-banner { border-bottom: 1px solid var(--border); padding: 16px 24px;
+                  display: flex; align-items: center; justify-content: center; gap: 12px; }
+.landing-banner-title { font-size: 22px; letter-spacing: -0.02em; }
+.landing-main { flex: 1; display: flex; flex-direction: column; align-items: center;
+                justify-content: center; gap: 24px; text-align: center; padding: 24px; }
+.landing-tagline { color: var(--text-muted); font-size: 15px; }
+.btn--hero { font-size: 16px; padding: 16px 40px; background: var(--surface); }
+.btn--learn { position: fixed; right: 16px; bottom: 16px; font-size: 12px; }
+
+/* ---------- modal (pure CSS :target — no JS) ---------- */
+.modal { display: none; position: fixed; inset: 0; z-index: 10;
+         align-items: center; justify-content: center; padding: 24px; }
+.modal:target { display: flex; }
+.modal-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.6); }
+.modal-box { position: relative; z-index: 1; width: 100%; max-width: 560px;
+             max-height: 82vh; overflow: auto; background: var(--surface);
+             border: 1px solid var(--border); border-radius: var(--radius); padding: 24px 28px; }
+.modal-title { font-size: 18px; margin-bottom: 12px; }
+.modal-box p { font-size: 13px; margin-bottom: 8px; }
+.modal-h { font-size: 11px; color: var(--text-muted); margin: 16px 0 4px;
+           text-transform: uppercase; letter-spacing: 0.05em; }
+.modal-box .btn { margin-top: 18px; text-decoration: none; }
+.modal-close { position: absolute; top: 10px; right: 16px; font-size: 22px;
+               line-height: 1; color: var(--text-muted); text-decoration: none; }
+.modal-close:hover { color: var(--text); }
+
+/* ---------- builder steppers ---------- */
+.slider-row { display: flex; align-items: center; gap: 10px; }
+.slider-row .slider { flex: 1; }
+.step { flex: none; width: 28px; height: 28px; font: 15px var(--mono); line-height: 1;
+        color: var(--text); background: var(--surface-2); border: 1px solid var(--border);
+        border-radius: var(--radius); cursor: pointer; }
+.step:hover { border-color: var(--text-muted); }

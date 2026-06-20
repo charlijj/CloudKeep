@@ -4,44 +4,57 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex, nofollow">
-    <meta name="description" content="Self-hosted infrastructure.">
-    <title>cloudkeep</title>
+    <meta name="description" content="Self-hosted virtual desktops, on demand.">
+    <title>CloudKeep</title>
     <link rel="stylesheet" href="/assets/style.css">
 </head>
-<body>
-    <header class="site-header">
-        <div class="container">
-            <a class="brand" href="/">
-                <span class="brand-mark" aria-hidden="true">&#9635;</span>
-                <span class="brand-name">cloudkeep</span>
-            </a>
-        </div>
+<body class="landing">
+    <header class="landing-banner">
+        <span class="brand-mark" aria-hidden="true">&#9635;</span>
+        <h1 class="landing-banner-title">CloudKeep</h1>
     </header>
-    <main class="container">
-        <section class="hero">
-            <h1 class="hero-title">cloudkeep</h1>
-            <p class="hero-tagline">Self-hosted infrastructure.</p>
-        </section>
-        <section class="section">
-            <header class="section-header">
-                <h2 class="section-title">Services</h2>
-            </header>
-            <div class="card-grid">
-                <article class="card">
-                    <header class="card-header">
-                        <h3 class="card-title">remote desktop</h3>
-                        <span class="badge badge--active">active</span>
-                    </header>
-                    <p class="card-body">Browser-based remote desktop via secure gateway.</p>
-                    <a class="btn btn--card" href="/app/">Connect</a>
-                </article>
-            </div>
-        </section>
+
+    <main class="landing-main">
+        <p class="landing-tagline">Self-hosted virtual desktops, on demand.</p>
+        <a class="btn btn--hero" href="/app/">Enter Launch Portal</a>
     </main>
-    <footer class="site-footer">
-        <div class="container">
-            <p class="site-footer-text">cloudkeep</p>
+
+    <a class="btn btn--learn" href="#about">Learn more about CloudKeep</a>
+
+    <!-- Pure-CSS modal (:target) — no JS, so it satisfies the page CSP (script-src 'none'). -->
+    <div id="about" class="modal" role="dialog" aria-modal="true" aria-labelledby="about-title">
+        <a href="#" class="modal-backdrop" aria-label="Close"></a>
+        <div class="modal-box">
+            <a href="#" class="modal-close" aria-label="Close">&times;</a>
+            <h2 id="about-title" class="modal-title">About CloudKeep</h2>
+
+            <p>CloudKeep is a self-hosted private cloud for browser-based virtual
+               desktops. It turns a single KVM host into a small fleet you can
+               build, manage, and connect to entirely in the browser &mdash; no
+               client to install.</p>
+
+            <h3 class="modal-h">How it works</h3>
+            <p>A public edge (NGINX over a WireGuard tunnel) fronts a control
+               plane running on the KVM host. When you build a machine, the host
+               clones a pre-built golden image into an isolated, internet-only
+               network and boots it in seconds. A secure, single-use WebSocket
+               bridge then streams the desktop to your browser.</p>
+
+            <h3 class="modal-h">How to use it</h3>
+            <p>Sign in at the launch portal and click <strong>+ build</strong>,
+               then choose cores, memory, and disk within your quota. When the
+               machine reports <strong>ready</strong>, hit <strong>Connect</strong>
+               for a full desktop. Stop, start, or delete machines any time from
+               the dashboard.</p>
+
+            <h3 class="modal-h">Security</h3>
+            <p>Every machine is network-isolated from the host and your LAN;
+               access is authenticated, rate-limited, and quota-bound; and each
+               desktop connection uses a single-use, short-lived token.</p>
+
+            <a class="btn btn--card" href="https://github.com/charlijj/CloudKeep"
+               target="_blank" rel="noopener">View on GitHub</a>
         </div>
-    </footer>
+    </div>
 </body>
 </html>
