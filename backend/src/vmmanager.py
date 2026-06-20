@@ -17,6 +17,7 @@ from config import settings
 from db import Database
 from provisioner import Provisioner
 from resources import ResourceTracker, QuotaError
+from states import DELETING, ERROR, PROVISIONING, REQUESTED, RUNNING, STOPPED
 
 logger = logging.getLogger("cloudkeep.manager")
 
@@ -52,18 +53,18 @@ class VMManager:
         """
         for vm in self._db.list_vms():
             st = vm["state"]
-            if st in ("REQUESTED", "PROVISIONING"):
-                self._db.set_state(vm["id"], "ERROR", "interrupted by restart")
+            if st in (REQUESTED, PROVISIONING):
+                self._db.set_state(vm["id"], ERROR, "interrupted by restart")
                 continue
-            if st in ("RUNNING", "STOPPED"):
+            if st in (RUNNING, STOPPED):
                 try:
                     active = await self._prov.is_active(vm["name"])
                 except Exception:
                     continue                 # libvirt unreachable -> leave as-is
-                if st == "RUNNING" and not active:
-                    self._db.set_state(vm["id"], "STOPPED")
-                elif st == "STOPPED" and active:
-                    self._db.set_state(vm["id"], "RUNNING")
+                if st == RUNNING and not active:
+                    self._db.set_state(vm["id"], STOPPED)
+                elif st == STOPPED and active:
+                    self._db.set_state(vm["id"], RUNNING)
 
     async def stop(self) -> None:
         if self._worker:
@@ -141,9 +142,9 @@ class VMManager:
 
     async def _provision(self, vm_id: int) -> None:
         vm = self._db.get_vm(vm_id)
-        if vm is None or vm["state"] != "REQUESTED":
+        if vm is None or vm["state"] != REQUESTED:
             return
-        self._db.set_state(vm_id, "PROVISIONING")
+        self._db.set_state(vm_id, PROVISIONING)
         try:
             await self._prov.create(name=vm["name"], vcpus=vm["vcpus"],
                                     mem_mb=vm["mem_mb"], disk_gb=vm["disk_gb"],
@@ -152,7 +153,7 @@ class VMManager:
                                               settings.PROVISION_TIMEOUT_S)
             if not ready:
                 raise TimeoutError("VNC did not come up in time")
-            self._db.set_state(vm_id, "RUNNING")
+            self._db.set_state(vm_id, RUNNING)
             self._db.audit(vm["owner_id"], "vm.running", vm["name"])
             logger.info("provisioned %s -> %s:%s", vm["name"],
                         vm["ip_addr"], vm["vnc_port"])
@@ -161,27 +162,27 @@ class VMManager:
             with contextlib.suppress(Exception):
                 await self._prov.destroy(name=vm["name"], mac=vm["mac"],
                                          ip=vm["ip_addr"])
-            self._db.set_state(vm_id, "ERROR", str(exc)[:200])
+            self._db.set_state(vm_id, ERROR, str(exc)[:200])
             self._db.audit(vm["owner_id"], "vm.error", f"{vm['name']}: {exc}")
 
     async def start_vm(self, user: dict, vm_id: int) -> dict:
         vm = self._require(user, vm_id)
-        if vm["state"] != "STOPPED":
+        if vm["state"] != STOPPED:
             raise Conflict(f"cannot start a VM in state {vm['state']}")
         async with self._alloc_lock:
             await self._tracker.check_resume(vm["vcpus"], vm["mem_mb"])
-            self._db.set_state(vm_id, "RUNNING")
+            self._db.set_state(vm_id, RUNNING)
         try:
             await self._prov.start(vm["name"])
         except Exception as exc:
-            self._db.set_state(vm_id, "ERROR", str(exc)[:200])
+            self._db.set_state(vm_id, ERROR, str(exc)[:200])
             raise Conflict(f"start failed: {exc}")
         self._db.audit(user["id"], "vm.start", vm["name"])
         return _public(self._db.get_vm(vm_id), self._is_admin(user))
 
     async def stop_vm(self, user: dict, vm_id: int) -> dict:
         vm = self._require(user, vm_id)
-        if vm["state"] != "RUNNING":
+        if vm["state"] != RUNNING:
             raise Conflict(f"cannot stop a VM in state {vm['state']}")
         await self._prov.stop(vm["name"])               # graceful ACPI
         # Confirm power-off before freeing RAM/CPU in the accounting; force if
@@ -189,7 +190,7 @@ class VMManager:
         # while the VM is still running.
         if not await self._wait_off(vm["name"], settings.STOP_TIMEOUT_S):
             await self._prov.force_off(vm["name"])
-        self._db.set_state(vm_id, "STOPPED")
+        self._db.set_state(vm_id, STOPPED)
         self._db.audit(user["id"], "vm.stop", vm["name"])
         return _public(self._db.get_vm(vm_id), self._is_admin(user))
 
@@ -197,16 +198,16 @@ class VMManager:
         vm = self._require(user, vm_id)
         # Block delete mid-build: the worker is still creating the domain/overlay
         # and would race the teardown. ERROR/RUNNING/STOPPED are all deletable.
-        if vm["state"] in ("REQUESTED", "PROVISIONING"):
+        if vm["state"] in (REQUESTED, PROVISIONING):
             raise Conflict("cannot delete a VM while it is being built")
-        self._db.set_state(vm_id, "DELETING")
+        self._db.set_state(vm_id, DELETING)
         await self._prov.destroy(name=vm["name"], mac=vm["mac"], ip=vm["ip_addr"])
         self._db.delete_vm(vm_id)
         self._db.audit(user["id"], "vm.delete", vm["name"])
 
     def mint_session(self, user: dict, vm_id: int) -> str:
         vm = self._require(user, vm_id)
-        if vm["state"] != "RUNNING":
+        if vm["state"] != RUNNING:
             raise Conflict("VM is not running")
         return self._sessions.issue(Binding(
             username=user["username"], vm_id=vm_id,

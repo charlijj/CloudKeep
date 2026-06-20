@@ -121,6 +121,27 @@ async def _rate_limited(request: Request, exc: RateLimitExceeded) -> JSONRespons
     return JSONResponse(status_code=429, content={"detail": "Too many requests"})
 
 
+# Domain exceptions -> HTTP, registered once instead of wrapping every endpoint.
+@app.exception_handler(NotFound)
+async def _h_not_found(request: Request, exc: NotFound) -> JSONResponse:
+    return JSONResponse(status_code=404, content={"detail": "No such VM"})
+
+
+@app.exception_handler(Forbidden)
+async def _h_forbidden(request: Request, exc: Forbidden) -> JSONResponse:
+    return JSONResponse(status_code=403, content={"detail": "Not your VM"})
+
+
+@app.exception_handler(Conflict)
+async def _h_conflict(request: Request, exc: Conflict) -> JSONResponse:
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(QuotaError)
+async def _h_quota(request: Request, exc: QuotaError) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
 # ---- dependencies ----------------------------------------------------------
 def get_cp(request: Request) -> ControlPlane:
     return request.app.state.cp
@@ -188,40 +209,36 @@ async def list_vms(user: dict = Depends(current_user),
 async def create_vm(request: Request, body: CreateVMRequest,
                     user: dict = Depends(current_user),
                     cp: ControlPlane = Depends(get_cp)) -> JSONResponse:
-    try:
-        vm = await cp.manager.request_vm(user, body.label, body.vcpus,
-                                         body.mem_mb, body.disk_gb)
-    except QuotaError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Conflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+    # QuotaError/Conflict are mapped to 400/409 by the registered handlers.
+    vm = await cp.manager.request_vm(user, body.label, body.vcpus,
+                                     body.mem_mb, body.disk_gb)
     # 202: accepted but not yet built — the worker provisions asynchronously
-    # and the dashboard polls /vms until the state flips to RUNNING or ERROR.
+    # and the dashboard polls until the state flips to RUNNING or ERROR.
     return JSONResponse(status_code=202, content=vm)
 
 
 @app.get("/vms/{vm_id}")
 async def get_vm(vm_id: int, user: dict = Depends(current_user),
                  cp: ControlPlane = Depends(get_cp)) -> dict:
-    return _translate(lambda: cp.manager.get_vm(user, vm_id))
+    return cp.manager.get_vm(user, vm_id)
 
 
 @app.post("/vms/{vm_id}/start")
 async def start_vm(vm_id: int, user: dict = Depends(current_user),
                    cp: ControlPlane = Depends(get_cp)) -> dict:
-    return await _translate_async(cp.manager.start_vm(user, vm_id))
+    return await cp.manager.start_vm(user, vm_id)
 
 
 @app.post("/vms/{vm_id}/stop")
 async def stop_vm(vm_id: int, user: dict = Depends(current_user),
                   cp: ControlPlane = Depends(get_cp)) -> dict:
-    return await _translate_async(cp.manager.stop_vm(user, vm_id))
+    return await cp.manager.stop_vm(user, vm_id)
 
 
 @app.delete("/vms/{vm_id}")
 async def delete_vm(vm_id: int, user: dict = Depends(current_user),
                     cp: ControlPlane = Depends(get_cp)) -> Response:
-    await _translate_async(cp.manager.delete_vm(user, vm_id))
+    await cp.manager.delete_vm(user, vm_id)
     # 204 must carry no body — a JSONResponse(content=None) would emit `null`
     # and trip "Response content longer than Content-Length".
     return Response(status_code=204)
@@ -230,33 +247,9 @@ async def delete_vm(vm_id: int, user: dict = Depends(current_user),
 @app.post("/vms/{vm_id}/session")
 async def create_vm_session(vm_id: int, user: dict = Depends(current_user),
                             cp: ControlPlane = Depends(get_cp)) -> dict:
-    token = _translate(lambda: cp.manager.mint_session(user, vm_id))
+    token = cp.manager.mint_session(user, vm_id)
     return {"session_token": token,
             "expires_in": settings.WS_TOKEN_EXPIRY_SECONDS}
-
-
-def _translate(fn):
-    """Map domain exceptions to HTTP codes for sync manager calls."""
-    try:
-        return fn()
-    except NotFound:
-        raise HTTPException(status_code=404, detail="No such VM")
-    except Forbidden:
-        raise HTTPException(status_code=403, detail="Not your VM")
-    except (Conflict, QuotaError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
-
-
-async def _translate_async(coro):
-    """Map domain exceptions to HTTP codes for async manager calls."""
-    try:
-        return await coro
-    except NotFound:
-        raise HTTPException(status_code=404, detail="No such VM")
-    except Forbidden:
-        raise HTTPException(status_code=403, detail="Not your VM")
-    except (Conflict, QuotaError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
 
 
 # ---- VNC bridge ------------------------------------------------------------

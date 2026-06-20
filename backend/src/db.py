@@ -19,14 +19,9 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
-# States that count against the host RAM/CPU pool and the user's RAM/CPU quota.
-RAM_CPU_STATES = ("REQUESTED", "PROVISIONING", "RUNNING")
-# States that count against disk (overlay exists on the pool).
-DISK_STATES = ("REQUESTED", "PROVISIONING", "RUNNING", "STOPPED")
-# States that count against the per-user VM *count* quota.
-LIVE_STATES = ("REQUESTED", "PROVISIONING", "RUNNING", "STOPPED")
+from states import RAM_CPU_STATES, DISK_STATES, LIVE_STATES
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -158,10 +153,6 @@ class Database:
     def used_ips(self) -> set[str]:
         return {r["ip_addr"] for r in self._q(
             "SELECT ip_addr FROM vms WHERE ip_addr IS NOT NULL")}
-
-    def used_macs(self) -> set[str]:
-        return {r["mac"] for r in self._q(
-            "SELECT mac FROM vms WHERE mac IS NOT NULL")}
 
     # -- accounting --------------------------------------------------------
     def host_allocation(self) -> dict:
