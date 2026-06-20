@@ -102,16 +102,6 @@ class VMManager:
             raise Forbidden("not your VM")
         return vm
 
-    async def _wait_off(self, name: str, timeout: int) -> bool:
-        """Poll until the domain is powered off, or timeout. True if it stopped."""
-        loop = asyncio.get_event_loop()
-        deadline = loop.time() + timeout
-        while loop.time() < deadline:
-            if not await self._prov.is_active(name):
-                return True
-            await asyncio.sleep(2)
-        return False
-
     def _alloc_mac_ip(self) -> tuple[str, str]:
         # Stable MAC derived from the IP. Reusing an address across rebuilds
         # then reuses the same MAC, so the host's ARP/neighbour cache and
@@ -210,12 +200,9 @@ class VMManager:
         vm = self._require(user, vm_id)
         if vm["state"] != RUNNING:
             raise Conflict(f"cannot stop a VM in state {vm['state']}")
-        await self._prov.stop(vm["name"])               # graceful ACPI
-        # Confirm power-off before freeing RAM/CPU in the accounting; force if
-        # the guest ignored ACPI, else the pool would treat the RAM as free
-        # while the VM is still running.
-        if not await self._wait_off(vm["name"], settings.STOP_TIMEOUT_S):
-            await self._prov.force_off(vm["name"])
+        # Hard power-off (libvirt destroy): instant and guaranteed — we don't
+        # wait on the guest OS's shutdown sequence.
+        await self._prov.force_off(vm["name"])
         self._db.set_state(vm_id, STOPPED)
         self._db.audit(user["id"], "vm.stop", vm["name"])
         return _public(self._db.get_vm(vm_id), self._is_admin(user))
