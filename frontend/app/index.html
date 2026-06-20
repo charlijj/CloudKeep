@@ -43,13 +43,26 @@
             <form id="builder" class="builder" autocomplete="off" hidden>
                 <label class="field"><span class="field-label">name</span>
                     <input class="field-input" id="vm-label" maxlength="40" placeholder="my-desktop" required></label>
-                <!-- sliders are configured (min/max/step) from GET /resources -->
+                <!-- sliders are configured (min/max/step) from GET /resources;
+                     the -/+ steppers nudge by one step for precise control -->
                 <label class="field"><span class="field-label">vCPUs &middot; <output id="out-vcpus"></output></span>
-                    <input class="slider" id="in-vcpus" type="range"></label>
+                    <div class="slider-row">
+                        <button class="step" type="button" data-slider="vcpus" data-dir="-1" aria-label="decrease vCPUs">&minus;</button>
+                        <input class="slider" id="in-vcpus" type="range">
+                        <button class="step" type="button" data-slider="vcpus" data-dir="1" aria-label="increase vCPUs">+</button>
+                    </div></label>
                 <label class="field"><span class="field-label">memory &middot; <output id="out-mem"></output> GB</span>
-                    <input class="slider" id="in-mem" type="range"></label>
+                    <div class="slider-row">
+                        <button class="step" type="button" data-slider="mem" data-dir="-1" aria-label="decrease memory">&minus;</button>
+                        <input class="slider" id="in-mem" type="range">
+                        <button class="step" type="button" data-slider="mem" data-dir="1" aria-label="increase memory">+</button>
+                    </div></label>
                 <label class="field"><span class="field-label">disk &middot; <output id="out-disk"></output> GB</span>
-                    <input class="slider" id="in-disk" type="range"></label>
+                    <div class="slider-row">
+                        <button class="step" type="button" data-slider="disk" data-dir="-1" aria-label="decrease disk">&minus;</button>
+                        <input class="slider" id="in-disk" type="range">
+                        <button class="step" type="button" data-slider="disk" data-dir="1" aria-label="increase disk">+</button>
+                    </div></label>
                 <button class="btn" id="build-submit" type="submit">Provision</button>
                 <p class="form-error" id="builder-error" role="alert" hidden></p>
             </form>
