@@ -87,9 +87,24 @@ sudo apt install --no-install-recommends -y \
     x11-xserver-utils fonts-dejavu-core cloud-guest-utils ufw \
     flatpak \
     libgl1-mesa-dri libglx-mesa0 libegl-mesa0 mesa-utils
-# Optional base CLI tools so users have them without root:
-#   sudo apt install --no-install-recommends -y git curl python3 nano
 ```
+
+### Developer + everyday baseline (recommended)
+
+Bake the common tools in at build time (you have root now) so users get them
+without ever needing root. Users add the rest via Flatpak / user-space managers.
+
+```bash
+sudo apt install --no-install-recommends -y \
+    git curl ca-certificates nano less unzip \
+    build-essential python3 python3-pip python3-venv
+
+# uv: prebuilt, no-root Python version + package manager (users: `uv python install 3.12`)
+sudo sh -c 'curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh'
+```
+
+> Users layer on the rest in **user scope, no root**: `rustup` (Rust), `nvm`/`fnm`
+> (Node), `pip install --user`/venvs, and Flatpak GUI apps (§2 above).
 
 > **The Mesa packages are not optional.** `Xvnc` has no GPU, and modern Firefox
 > (and VS Code, Electron apps, VLC, …) render exclusively through WebRender,
@@ -305,14 +320,30 @@ EOF
 sudo systemctl enable cloudkeep-firstboot.service
 ```
 
-## 9. Diagnostics + recovery (no in-guest admin)
+## 9. Boot console + diagnostics (in the GUEST)
 
-With no SSH and no sudo there's intentionally no privileged shell in a clone.
-To inspect one:
-- **Watch boot / login**: host-side QEMU console — `virsh vncdisplay vm-N` →
+### Serial boot output
+
+Send the kernel + early-boot messages to the serial port (`ttyS0`) as well as
+the screen. This is what makes boot progress visible on the host — via `virsh
+console` and the planned live boot-log panel in the portal — without giving the
+guest any network surface.
+
+```bash
+sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash console=tty1 console=ttyS0,115200"/' /etc/default/grub
+sudo update-grub
+```
+
+> `console=ttyS0,115200` (last `console=` wins for `/dev/console`) routes the
+> kernel + systemd boot stream to the serial port; libvirt captures it host-side.
+> No getty is enabled, so this is output-only — no interactive login over serial.
+
+### Inspecting a clone (no in-guest admin)
+
+With no SSH and no sudo there's intentionally no privileged shell in a clone:
+- **Watch boot / desktop**: host-side QEMU console — `virsh vncdisplay vm-N` →
   point a VNC viewer at `127.0.0.1:<5900+N>` on the host (no guest creds needed).
-- **Inspect the disk offline**: `guestfish`/`virt-cat` on the host against the
-  clone's overlay.
+- **Inspect the disk offline**: `guestfish`/`virt-cat` on the host.
 - **Broken clone**: delete and rebuild — clones are ephemeral and cheap.
 
 root stays locked (Ubuntu default) — no baked-in credentials in the image.
