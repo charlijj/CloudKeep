@@ -14,6 +14,7 @@
 // ---------- state ----------
 let jwt = null;        // bearer token, memory only
 let rfb = null;        // active noVNC connection
+let consoleWS = null;  // active boot-log WebSocket
 let pollTimer = null;  // dashboard refresh while any VM is building
 
 // ---------- helpers ----------
@@ -55,7 +56,8 @@ async function detail(res, fallback) {
 }
 
 // ---------- views ----------
-const views = { login: $('view-login'), dashboard: $('view-dashboard'), viewer: $('view-viewer') };
+const views = { login: $('view-login'), dashboard: $('view-dashboard'),
+                viewer: $('view-viewer'), console: $('view-console') };
 
 function showView(name) {
     for (const [key, el] of Object.entries(views)) el.hidden = key !== name;
@@ -157,6 +159,10 @@ function renderVMs(vms) {
                 h('h3', 'card-title', vm.label),
                 h('span', `badge ${cls}`, text)),
             h('p', 'card-body', `${vm.vcpus} vCPU · ${GB(vm.mem_mb)} GB RAM · ${vm.disk_gb} GB disk`));
+        // While a VM is queued/building, show the live provisioning stage so the
+        // user sees what it's doing rather than guessing whether it's hung.
+        if (['REQUESTED', 'PROVISIONING'].includes(vm.state) && vm.progress)
+            card.append(h('p', 'card-progress', vm.progress));
         if (vm.state === 'ERROR' && vm.error_msg)
             card.append(h('p', 'card-err', vm.error_msg));
 
@@ -167,6 +173,10 @@ function renderVMs(vms) {
         } else if (vm.state === 'STOPPED') {
             actions.append(button('Start', 'btn--card', () => lifecycle(vm.id, 'start')));
         }
+        // Live boot log: available while booting or running, so users can watch
+        // a build progress and diagnose a slow/stuck boot.
+        if (['PROVISIONING', 'RUNNING'].includes(vm.state))
+            actions.append(button('Logs', 'btn--ghost', () => showConsole(vm.id, vm.label)));
         if (!['PROVISIONING', 'REQUESTED', 'DELETING'].includes(vm.state))
             actions.append(button('Delete', 'btn--ghost btn--danger', () => destroy(vm.id, vm.label)));
         if (actions.childElementCount) card.append(actions);
@@ -305,6 +315,45 @@ async function connect(vmId) {
 }
 
 $('disconnect').addEventListener('click', () => { if (rfb) rfb.disconnect(); });
+
+// ---------- console (live boot log) ----------
+async function showConsole(vmId, label) {
+    // Mint a single-use, console-bound token (server-side it's pinned to this
+    // VM's serial console and rejected by the VNC bridge), then open the WS.
+    const res = await api(`/vms/${vmId}/console-session`, { method: 'POST' });
+    if (!res.ok) { showError('dashboard-error', await detail(res, 'could not open console')); refresh(); return; }
+    const { session_token } = await res.json();
+
+    showView('console');
+    $('console-title').textContent = `Boot log — ${label}`;
+    const log = $('console-log');
+    log.textContent = '';
+    setConsoleStatus('Connecting…');
+
+    consoleWS = new WebSocket(`wss://${location.host}/ck/console?session_token=${session_token}`);
+    consoleWS.addEventListener('open', () => setConsoleStatus('Streaming'));
+    consoleWS.addEventListener('message', (ev) => {
+        // Keep the view pinned to the bottom only if the user is already there,
+        // so manual scroll-back to read earlier output isn't yanked away.
+        const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+        log.textContent += ev.data;
+        // Cap the buffer so a long-running stream can't grow unboundedly.
+        if (log.textContent.length > 200000) log.textContent = log.textContent.slice(-160000);
+        if (atBottom) log.scrollTop = log.scrollHeight;
+    });
+    consoleWS.addEventListener('close', () => { setConsoleStatus('Disconnected'); consoleWS = null; });
+    consoleWS.addEventListener('error', () => setConsoleStatus('Connection error'));
+}
+
+function setConsoleStatus(text) { $('console-status').textContent = text; }
+
+function closeConsole() {
+    if (consoleWS) { consoleWS.close(); consoleWS = null; }
+    showView('dashboard');
+    refresh();
+}
+
+$('console-close').addEventListener('click', closeConsole);
 
 // ---------- start ----------
 showView('login');

@@ -330,13 +330,18 @@ console` and the planned live boot-log panel in the portal — without giving th
 guest any network surface.
 
 ```bash
-sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash console=tty1 console=ttyS0,115200"/' /etc/default/grub
+sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="console=tty1 console=ttyS0,115200"/' /etc/default/grub
 sudo update-grub
 ```
 
 > `console=ttyS0,115200` (last `console=` wins for `/dev/console`) routes the
-> kernel + systemd boot stream to the serial port; libvirt captures it host-side.
-> No getty is enabled, so this is output-only — no interactive login over serial.
+> kernel + systemd boot stream to the serial port; libvirt captures it host-side
+> and the portal's live boot-log panel streams it to the browser. No getty is
+> enabled, so this is output-only — no interactive login over serial.
+>
+> **`quiet splash` is intentionally dropped** (the Ubuntu default sets it): the
+> whole point of the boot-log panel is a verbose, informative boot — `quiet`
+> would suppress exactly the kernel/systemd messages users want to watch.
 
 ### Inspecting a clone (no in-guest admin)
 

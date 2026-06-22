@@ -82,6 +82,17 @@
         <div id="screen" class="viewer-screen"></div>
     </section>
 
+    <!-- CONSOLE (full-bleed live boot log, outside .container) -->
+    <section id="view-console" class="view view-console" hidden>
+        <div class="viewer-bar">
+            <span class="brand-mark" aria-hidden="true">&#9635;</span>
+            <span id="console-title" class="viewer-status">Boot log</span>
+            <span id="console-status" class="badge">Connecting&hellip;</span>
+            <button class="btn btn--ghost" id="console-close" type="button">close</button>
+        </div>
+        <pre id="console-log" class="console-log" aria-live="polite"></pre>
+    </section>
+
     <script type="module" src="/assets/app.js"></script>
 </body>
 </html>
