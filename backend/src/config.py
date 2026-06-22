@@ -44,7 +44,8 @@ class Settings(BaseSettings):
     IMAGE_DIR: str = "/var/lib/cloudkeep/images"
     GOLDEN_IMAGE: str = "/var/lib/cloudkeep/images/golden-v1.qcow2"
     OS_VARIANT: str = "ubuntu24.04"
-    PROVISION_TIMEOUT_S: int = 180      # wait for VNC ready before ERROR
+    PROVISION_TIMEOUT_S: int = 300      # wait for VNC ready before ERROR; a clone's
+                                        # first boot (disk resize + full desktop) is slow
 
     # --- Guest network (isolated; VMs get a deterministic lease here) ---
     GUEST_NET_PREFIX: str = "10.20.0"   # /24
