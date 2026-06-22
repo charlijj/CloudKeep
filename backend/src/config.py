@@ -67,7 +67,8 @@ class Settings(BaseSettings):
     # --- Builder sizing bounds (UI caps to min(quota, host-free) within these) ---
     VM_MIN_VCPUS: int = 1
     VM_MAX_VCPUS: int = 8
-    VM_MIN_MEM_MB: int = 1024
+    VM_MIN_MEM_MB: int = 2048           # a browser desktop on software rendering
+                                        # needs >1 GB; 2 GB is the usable floor
     VM_MAX_MEM_MB: int = 16384
     VM_MEM_STEP_MB: int = 1024
     VM_MIN_DISK_GB: int = 16

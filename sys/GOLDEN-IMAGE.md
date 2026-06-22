@@ -85,10 +85,18 @@ sudo apt install --no-install-recommends -y \
     thunar xfce4-terminal dbus-x11 \
     tigervnc-standalone-server tigervnc-common \
     x11-xserver-utils fonts-dejavu-core cloud-guest-utils ufw \
-    flatpak
+    flatpak \
+    libgl1-mesa-dri libglx-mesa0 libegl-mesa0 mesa-utils
 # Optional base CLI tools so users have them without root:
 #   sudo apt install --no-install-recommends -y git curl python3 nano
 ```
+
+> **The Mesa packages are not optional.** `Xvnc` has no GPU, and modern Firefox
+> (and VS Code, Electron apps, VLC, …) render exclusively through WebRender,
+> which *requires* an OpenGL/EGL context. Without Mesa's software GL
+> (`libgl1-mesa-dri` = llvmpipe), the browser's GPU process has nothing to bind
+> to and Firefox shows a blank window / fails to open. See §4 for the matching
+> session env + Firefox config.
 
 ### Firefox — native .deb (no snap)
 
@@ -155,6 +163,9 @@ sudo -u app tee /home/app/.vnc/xstartup >/dev/null <<'EOF'
 #!/bin/sh
 unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
+# Force software OpenGL for every app in the session (no GPU under Xvnc).
+# This is what lets Firefox/VS Code/etc. get a GL context instead of crashing.
+export LIBGL_ALWAYS_SOFTWARE=1
 exec dbus-launch --exit-with-session sh -c '
     xfconf-query -c xfwm4 -p /general/use_compositing -s false --create -t bool 2>/dev/null || true
     xfconf-query -c xfwm4 -p /general/box_move        -s true  --create -t bool 2>/dev/null || true
@@ -169,6 +180,29 @@ sudo chown -R app:app /home/app/.vnc
 `localhost=no` + `SecurityTypes=None` = network-reachable, unauthenticated VNC —
 safe only because of the firewall in §6. Compositing off is the biggest VNC
 efficiency win (fewer/smaller framebuffer updates).
+
+### Lock Firefox to software rendering (belt-and-suspenders)
+
+So Firefox's GPU process never probes for (nonexistent) hardware and crash-loops,
+pin it to software WebRender system-wide via Firefox's autoconfig:
+
+```bash
+sudo tee /usr/lib/firefox/defaults/pref/autoconfig.js >/dev/null <<'EOF'
+pref("general.config.filename", "firefox.cfg");
+pref("general.config.obscure_value", 0);
+EOF
+sudo tee /usr/lib/firefox/firefox.cfg >/dev/null <<'EOF'
+// (Firefox ignores this first line)
+defaultPref("gfx.webrender.software", true);
+defaultPref("layers.acceleration.disabled", true);
+defaultPref("media.hardware-video-decoding.enabled", false);
+defaultPref("gfx.x11-egl.force-enabled", true);
+EOF
+```
+
+> `defaultPref` (not `lockPref`) sets the safe default but still lets an advanced
+> user flip it. With the Mesa packages from §2 installed, Firefox already
+> auto-selects software WebRender — this just makes it deterministic.
 
 ## 5. The VNC service (in the GUEST)
 
@@ -350,9 +384,29 @@ timeout 3 bash -c '</dev/tcp/10.20.0.50/5901' && echo "VNC reachable"
 virsh vncdisplay vm-N                                  # emergency console to watch boot
 ```
 
-Confirm the lockdown took: in the portal desktop's terminal, `sudo -n true`
-should **fail** (not in sudoers), while `flatpak install --user flathub <app-id>`
-works with **no** password prompt.
+In the portal desktop's terminal, confirm three things:
+
+```bash
+glxinfo | grep "OpenGL renderer"     # -> "llvmpipe" (software GL works)
+sudo -n true                          # MUST fail (app is unprivileged)
+flatpak install --user flathub org.gnome.gedit   # works WITHOUT a password prompt
+```
+
+Then open **Firefox** and load a page — it must render, not show a blank window.
+If it's blank, GL is missing: re-check the Mesa packages (§2) and `glxinfo`.
+
+## Everyday + developer apps
+
+The baseline (browser + terminal + file manager) covers basics; users add the
+rest from Flathub in user scope, all of which benefit from the software-GL setup:
+
+- **Email:** `org.mozilla.Thunderbird` (or webmail in Firefox).
+- **Code/IDE:** `com.visualstudio.code`, `org.gnome.gitg`; runtimes via user space
+  (`pip install --user`, `nvm`, `rustup`).
+- **Media/office:** `org.videolan.VLC`, `org.libreoffice.LibreOffice`.
+
+If you want any of these in the *default* image, install them system-wide before
+sealing (`sudo flatpak install -y flathub <app-id>`) — at the cost of image size.
 
 ## Versioning + patching
 
