@@ -9,7 +9,10 @@ Design choices (why it's efficient + secure):
   display manager, no Xorg, no emulated-GPU desktop path. Leanest possible stack.
 - **XFCE core only**, compositing off — a usable desktop with minimal overhead.
 - **No SSH.** VMs are reached only through the CloudKeep portal/VNC. Admin
-  recovery is a host-only serial console (`virsh console`), never the network.
+  diagnostics use the host-side QEMU console, never the network.
+- **Unprivileged by default.** The desktop user has **no sudo** — it cannot edit
+  `/etc`, change the firewall, or stop services. Users install/remove their own
+  apps via **Flatpak (user scope)**; Firefox ships pre-installed.
 - **In-guest VNC on the guest interface** (`localhost=no`), `SecurityTypes=None`
   — safe because UFW admits `5901` only from the host bridge `10.20.0.1`, and the
   portal already authenticated the user.
@@ -72,35 +75,68 @@ sudo systemctl disable --now unattended-upgrades 2>/dev/null || true
 sudo apt -y autoremove --purge
 ```
 
-## 2. Install the desktop + VNC (in the GUEST)
+## 2. Install the desktop, browser + VNC (in the GUEST)
 
-Explicit minimal set, `--no-install-recommends` to avoid pulling extras:
+Minimal set, `--no-install-recommends` to avoid extras:
 
 ```bash
 sudo apt install --no-install-recommends -y \
     xfce4-session xfwm4 xfdesktop4 xfce4-panel xfce4-settings \
     thunar xfce4-terminal dbus-x11 \
     tigervnc-standalone-server tigervnc-common \
-    x11-xserver-utils fonts-dejavu-core cloud-guest-utils ufw
+    x11-xserver-utils fonts-dejavu-core cloud-guest-utils ufw \
+    flatpak
+# Optional base CLI tools so users have them without root:
+#   sudo apt install --no-install-recommends -y git curl python3 nano
 ```
 
-> This is the daily-driver baseline. Bake in more (a browser, editors) only if
-> you want a richer default — every package adds image size and boot time.
+### Firefox — native .deb (no snap)
 
-## 3. Desktop user + sudo (in the GUEST)
-
-`app` is the single-tenant desktop user (the VM belongs to whoever the portal
-authenticated). Passwordless sudo so they can manage their own machine:
+snapd is gone, so install Firefox from Mozilla's APT repo (a real deb, pinned
+above the Ubuntu snap transitional package):
 
 ```bash
-echo 'app ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/app
-sudo chmod 440 /etc/sudoers.d/app
+sudo install -d -m 0755 /etc/apt/keyrings
+wget -qO- https://packages.mozilla.org/apt/repo-signing-key.gpg \
+  | sudo tee /etc/apt/keyrings/packages.mozilla.org.asc >/dev/null
+echo 'deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc] https://packages.mozilla.org/apt mozilla main' \
+  | sudo tee /etc/apt/sources.list.d/mozilla.list >/dev/null
+printf 'Package: *\nPin: origin packages.mozilla.org\nPin-Priority: 1000\n' \
+  | sudo tee /etc/apt/preferences.d/mozilla >/dev/null
+sudo apt update && sudo apt install -y firefox
 ```
 
-> Security note: this is acceptable because the VM is single-owner, network-
-> isolated (no LAN/host reach), and ephemeral — a compromised guest is contained.
-> If you'd rather require a password, set one for `app` (`sudo passwd app`) and
-> remove the sudoers file; users then type it in the terminal.
+### User-installable apps — no root
+
+Add Flathub so end users install/remove additional GUI apps in **user scope**
+(`flatpak install --user …`), without sudo:
+
+```bash
+sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+```
+
+> For a clickable app centre add `gnome-software gnome-software-plugin-flatpak`
+> (heavier). Otherwise users run `flatpak install --user flathub <app-id>`.
+
+## 3. Desktop user — unprivileged model (in the GUEST)
+
+`app` is the single-tenant desktop user. In the **final image it has no sudo** —
+this is the core of the lockdown: with no root it can't edit `/etc`, change the
+firewall, stop services, or alter networking. It gets a normal desktop, installs
+its own apps via Flatpak (§2), and owns its home directory.
+
+> During the build `app` still needs the installer's sudo to run §1–§8. We strip
+> it as the **last** guest action (§10) — don't remove it now or those steps fail.
+
+**Why no sudo (and where the real boundary is):** "install system packages" is
+equivalent to root — `apt` runs maintainer scripts as root and `sudo apt install
+./x.deb` runs arbitrary root code, so sudo *cannot* be scoped to "just packages".
+Hence none. Crucially, the host was never protected by the guest's restrictions:
+even a root guest **cannot reach the host or other VMs** — that isolation is
+enforced on the *host* (nftables drops guest→host/LAN, the bridge's `port
+isolated` blocks VM↔VM, the `clean-traffic` nwfilter pins MAC/IP), none of which
+a guest can touch. No-sudo keeps the *guest* in a known-good state; the host's
+safety is independent of it.
 
 ## 4. TigerVNC session config (in the GUEST)
 
@@ -235,25 +271,35 @@ EOF
 sudo systemctl enable cloudkeep-firstboot.service
 ```
 
-## 9. Recovery console (in the GUEST)
+## 9. Diagnostics + recovery (no in-guest admin)
 
-With SSH gone, the only way into a misbehaving clone is the host-only serial
-console (`virsh console vm-N`). Enable a getty on it:
+With no SSH and no sudo there's intentionally no privileged shell in a clone.
+To inspect one:
+- **Watch boot / login**: host-side QEMU console — `virsh vncdisplay vm-N` →
+  point a VNC viewer at `127.0.0.1:<5900+N>` on the host (no guest creds needed).
+- **Inspect the disk offline**: `guestfish`/`virt-cat` on the host against the
+  clone's overlay.
+- **Broken clone**: delete and rebuild — clones are ephemeral and cheap.
 
-```bash
-sudo systemctl enable serial-getty@ttyS0.service
-```
+root stays locked (Ubuntu default) — no baked-in credentials in the image.
 
-This is reachable only from the host via libvirt — never over the network.
+## 10. Lock down (in the GUEST) — final guest step
 
-## 10. Final tidy + power off (in the GUEST)
+Tidy, then strip the desktop user's privileges as the very last action. Do
+**not** power off here — the seal script (§11) shuts the VM down from the host,
+which avoids needing sudo after you've removed it.
 
 ```bash
 sudo apt -y autoremove --purge && sudo apt clean
 sudo journalctl --rotate && sudo journalctl --vacuum-time=1s
-cat /dev/null > ~/.bash_history && history -c
-sudo poweroff
+cat /dev/null > ~/.bash_history
+
+# Make `app` unprivileged (takes effect on every clone's boot):
+sudo rm -f /etc/sudoers.d/90-cloud-init-users
+sudo gpasswd -d app sudo
 ```
+
+Now switch to the host and run §11.
 
 ## 11. Seal into the template (on the HOST)
 
@@ -295,15 +341,18 @@ echo "==> done:"; qemu-img info "$GOLDEN"
 ## 12. Verification (build a real VM)
 
 In the portal, click **+ build**. On success controld logs
-`provisioned vm-N -> 10.20.0.x:5901` and the card flips to **ready**. Inside a
-clone (via `virsh console vm-N`, login `app`):
+`provisioned vm-N -> 10.20.0.x:5901` and the card flips to **ready**; Connect
+shows the XFCE desktop with Firefox. From the HOST (no guest login needed):
 
 ```bash
-ss -ltn | grep 5901           # 0.0.0.0:5901
-systemctl is-active cloudkeep-vnc      # active
-sudo ufw status | grep 5901   # ALLOW from 10.20.0.1
-ip a                          # has a 10.20.0.x lease
+virsh domifaddr vm-N                                   # has a 10.20.0.x lease
+timeout 3 bash -c '</dev/tcp/10.20.0.50/5901' && echo "VNC reachable"
+virsh vncdisplay vm-N                                  # emergency console to watch boot
 ```
+
+Confirm the lockdown took: in the portal desktop's terminal, `sudo -n true`
+should **fail** (not in sudoers), while `flatpak install --user flathub <app-id>`
+works with **no** password prompt.
 
 ## Versioning + patching
 
