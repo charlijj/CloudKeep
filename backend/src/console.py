@@ -13,11 +13,14 @@ Design:
     costs nothing (no always-on buffering).
   * libvirt stream `recv` is a blocking C call, so the read loop runs on a
     daemon thread that owns its OWN libvirt connection (connections are not
-    thread-safe to share); bytes are handed to the event loop via a queue with
-    `call_soon_threadsafe`.
+    thread-safe to share); bytes are handed to the event loop via a BOUNDED
+    queue with `call_soon_threadsafe` (drop-oldest on overflow, so a runaway
+    serial port can't grow controld's memory).
   * The pump races "queue -> browser" against "browser disconnected"; whichever
-    finishes first tears the other down. ANSI escape sequences are stripped so
-    the panel shows clean text.
+    finishes first tears the other down. ANSI escapes, stray CRs and other
+    control bytes are stripped so the panel renders as clean text.
+  * A global cap bounds how many streams (libvirt connections + threads) run at
+    once across the single-worker process.
 """
 from __future__ import annotations
 
@@ -34,6 +37,13 @@ logger = logging.getLogger("cloudkeep.console")
 # CSI / SGR escape sequences (colour, cursor moves) -> stripped for a plain
 # read-only text panel. Matches ESC [ ... <final byte>.
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+# C0 control bytes to drop, keeping TAB (\x09) and LF (\x0a). CR is handled
+# separately (CRLF -> LF) so real serial output (which is CRLF) reads cleanly.
+_CTRL = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]")
+
+# Concurrent-stream cap. Single-worker event loop, so a plain int mutated only
+# on the loop thread (no await between read and write) is race-free.
+_active_streams = 0
 
 # Synthetic boot trace for LIBVIRT_URI=fake so the feature is exercisable
 # end-to-end without real KVM.
@@ -49,22 +59,47 @@ _FAKE_LOG = [
 ]
 
 
+def _clean(data: bytes) -> str:
+    """Decode raw console bytes to clean panel text: drop ANSI escapes, fold
+    CRLF/CR to LF, and remove the remaining C0 control bytes."""
+    text = data.decode("utf-8", "replace")
+    text = _ANSI.sub("", text)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return _CTRL.sub("", text)
+
+
 async def serve_console(websocket, name: str) -> None:
     """Accept the WS and stream domain `name`'s serial console until either
     side closes. Never raises out to the caller."""
+    global _active_streams
     await websocket.accept()
+
+    if _active_streams >= settings.CONSOLE_MAX_STREAMS:
+        logger.warning("console refused vm=%s reason=too_many_streams active=%d",
+                       name, _active_streams)
+        with contextlib.suppress(Exception):
+            await websocket.send_text(
+                "\n[CloudKeep] Too many console streams open right now — "
+                "close another Logs panel and try again.\n")
+            await websocket.close()
+        return
+
     if settings.use_fake:
         await _serve_fake(websocket)
         return
 
-    loop = asyncio.get_running_loop()
-    queue: asyncio.Queue = asyncio.Queue()
-    reader = _Reader(name, queue, loop)
-    reader.start()
+    _active_streams += 1
+    reader = None
     try:
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=settings.CONSOLE_QUEUE_MAX)
+        reader = _Reader(name, queue, loop)
+        reader.start()
         await _pump(websocket, queue)
     finally:
-        reader.stop()
+        if reader is not None:
+            reader.stop()
+        _active_streams -= 1
         with contextlib.suppress(Exception):
             await websocket.close()
 
@@ -77,8 +112,7 @@ async def _pump(websocket, queue: asyncio.Queue) -> None:
             data = await queue.get()
             if data is None:                 # reader signalled EOF / error
                 return
-            text = _ANSI.sub("", data.decode("utf-8", "replace"))
-            await websocket.send_text(text)
+            await websocket.send_text(_clean(data))
 
     async def watch_close() -> None:
         # The panel is read-only; we never act on inbound frames — receiving
@@ -119,7 +153,7 @@ async def _serve_fake(websocket) -> None:
 
 class _Reader(threading.Thread):
     """Daemon thread: opens its own libvirt connection, attaches to the domain
-    console, and pushes raw bytes onto the event loop's queue."""
+    console, and pushes raw bytes onto the event loop's bounded queue."""
 
     def __init__(self, name: str, queue: asyncio.Queue,
                  loop: asyncio.AbstractEventLoop) -> None:
@@ -134,7 +168,18 @@ class _Reader(threading.Thread):
 
     def _emit(self, data) -> None:
         # Hop back onto the event-loop thread; the queue is not thread-safe.
-        self._loop.call_soon_threadsafe(self._queue.put_nowait, data)
+        self._loop.call_soon_threadsafe(self._put, data)
+
+    def _put(self, data) -> None:
+        # Runs on the loop thread. Bound the queue: drop the oldest chunk when
+        # full so a runaway serial port can't grow memory. The None sentinel is
+        # never dropped (it must reach the pump to end the stream).
+        q = self._queue
+        if data is not None and q.full():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                q.get_nowait()
+        with contextlib.suppress(asyncio.QueueFull):
+            q.put_nowait(data)
 
     def run(self) -> None:
         import libvirt
