@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     AUTH_RATE_LIMIT: str = "5/minute"
     PROVISION_RATE_LIMIT: str = "5/hour"
 
+    # --- Live serial console (boot-log streaming) ---
+    # Each open stream holds one libvirt connection + one reader thread, so cap
+    # how many run at once to bound resource use from the (authenticated)
+    # console surface. The in-memory byte queue is bounded too: a guest spamming
+    # its serial port drops oldest rather than growing controld's memory.
+    CONSOLE_MAX_STREAMS: int = 8
+    CONSOLE_QUEUE_MAX: int = 1024
+
     # --- Persistence ---
     DB_PATH: str = "/var/lib/cloudkeep/db/cloudkeep.db"
 

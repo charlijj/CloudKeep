@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS vms (
     ip_addr    TEXT,
     vnc_port   INTEGER NOT NULL DEFAULT 5901,
     error_msg  TEXT,
+    progress   TEXT,                          -- human boot/provision stage (NULL when settled)
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS pcie (
@@ -76,7 +77,17 @@ class Database:
         self._conn.execute("PRAGMA foreign_keys=ON")
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            self._migrate()
             self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Idempotent, additive migrations for DBs created before a column
+        existed. CREATE TABLE IF NOT EXISTS won't add columns to an existing
+        table, so new columns are applied here. Caller holds the lock."""
+        cols = {r["name"] for r in
+                self._conn.execute("PRAGMA table_info(vms)").fetchall()}
+        if "progress" not in cols:
+            self._conn.execute("ALTER TABLE vms ADD COLUMN progress TEXT")
 
     # -- low-level helpers -------------------------------------------------
     def _q(self, sql: str, args: tuple = ()) -> list[sqlite3.Row]:
@@ -146,6 +157,12 @@ class Database:
     def set_state(self, vm_id: int, state: str, error_msg: str | None = None) -> None:
         self._exec("UPDATE vms SET state=?, error_msg=? WHERE id=?",
                    (state, error_msg, vm_id))
+
+    def set_progress(self, vm_id: int, progress: str | None) -> None:
+        """Update the live provisioning stage shown on building cards. Pass
+        None once the VM settles (RUNNING/STOPPED/ERROR) so the UI stops
+        showing a stale stage."""
+        self._exec("UPDATE vms SET progress=? WHERE id=?", (progress, vm_id))
 
     def delete_vm(self, vm_id: int) -> None:
         self._exec("DELETE FROM vms WHERE id=?", (vm_id,))

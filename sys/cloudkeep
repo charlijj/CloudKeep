@@ -123,6 +123,20 @@ server {
         proxy_send_timeout 3600s;
     }
 
+    # Live serial-console (boot log) WebSocket — same upgrade/streaming setup as
+    # the VNC bridge; proxy_buffering off so log lines arrive in real time.
+    location /ck/console {
+        proxy_pass http://10.10.10.2:8000/console;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host       $host;
+        proxy_set_header X-Real-IP  $remote_addr;
+        proxy_buffering    off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
     # Control API (REST): /ck/vms, /ck/resources, /ck/vms/{id}/session, etc.
     # Longest-prefix match means /ck/auth/ and /ck/ws above still win; this is
     # the catch-all for the rest of the control plane. Not rate-limited (these

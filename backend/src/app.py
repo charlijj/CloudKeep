@@ -14,7 +14,9 @@ Endpoints
   POST /vms/{id}/start|stop   lifecycle
   DELETE /vms/{id}            tear down + reclaim
   POST /vms/{id}/session      one-time WS token bound to that VM's VNC
+  POST /vms/{id}/console-session  one-time WS token bound to that VM's console
   WS   /ws                    consume token -> relay bytes to the bound VM
+  WS   /console               consume token -> stream the VM's serial boot log
   GET  /health                liveness + libvirt/pool status
 """
 from __future__ import annotations
@@ -33,6 +35,7 @@ from slowapi.util import get_remote_address
 
 from auth_core import AuthService, SessionStore
 from config import settings
+from console import serve_console
 from db import Database
 from provisioner import build_provisioner
 from resources import ResourceTracker, QuotaError
@@ -255,7 +258,15 @@ async def delete_vm(vm_id: int, user: dict = Depends(current_user),
 @app.post("/vms/{vm_id}/session")
 async def create_vm_session(vm_id: int, user: dict = Depends(current_user),
                             cp: ControlPlane = Depends(get_cp)) -> dict:
-    token = cp.manager.mint_session(user, vm_id)
+    token = cp.manager.mint_session(user, vm_id, "vnc")
+    return {"session_token": token,
+            "expires_in": settings.WS_TOKEN_EXPIRY_SECONDS}
+
+
+@app.post("/vms/{vm_id}/console-session")
+async def create_console_session(vm_id: int, user: dict = Depends(current_user),
+                                 cp: ControlPlane = Depends(get_cp)) -> dict:
+    token = cp.manager.mint_session(user, vm_id, "console")
     return {"session_token": token,
             "expires_in": settings.WS_TOKEN_EXPIRY_SECONDS}
 
@@ -279,6 +290,12 @@ async def ws_vnc(websocket: WebSocket) -> None:
         logger.warning("ws rejected ip=%s reason=invalid_session_token", ip)
         await websocket.close(code=4001)
         return
+    # A token's kind is pinned at mint time; a console token must not open the
+    # VNC bridge (and vice versa, below). It's already consumed, so just reject.
+    if binding.kind != "vnc":
+        logger.warning("ws rejected ip=%s reason=wrong_kind kind=%s", ip, binding.kind)
+        await websocket.close(code=4403)
+        return
     await websocket.accept()
     bridge = VNCBridge(binding.host, binding.port)
     try:
@@ -289,6 +306,33 @@ async def ws_vnc(websocket: WebSocket) -> None:
         await websocket.close(code=1011)
     finally:
         await bridge.close()
+
+
+# ---- live serial console ---------------------------------------------------
+@app.websocket("/console")
+async def ws_console(websocket: WebSocket) -> None:
+    """Stream a VM's serial boot log (read-only). Same token/origin contract as
+    /ws, but the token must be kind="console" and we attach to the libvirt
+    domain rather than dialling a VNC socket."""
+    cp: ControlPlane = websocket.app.state.cp
+    token = websocket.query_params.get("session_token", "")
+    ip = websocket.client.host if websocket.client else "unknown"
+    if websocket.headers.get("origin") != settings.ALLOWED_ORIGIN:
+        logger.warning("console ws rejected ip=%s reason=bad_origin origin=%s",
+                       ip, websocket.headers.get("origin"))
+        await websocket.close(code=4403)
+        return
+    binding = cp.sessions.consume(token)         # single-use, VM-bound
+    if binding is None:
+        logger.warning("console ws rejected ip=%s reason=invalid_session_token", ip)
+        await websocket.close(code=4001)
+        return
+    if binding.kind != "console":
+        logger.warning("console ws rejected ip=%s reason=wrong_kind kind=%s",
+                       ip, binding.kind)
+        await websocket.close(code=4403)
+        return
+    await serve_console(websocket, binding.name)
 
 
 # ---- health ----------------------------------------------------------------

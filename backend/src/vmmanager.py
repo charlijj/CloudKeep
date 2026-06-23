@@ -56,6 +56,7 @@ class VMManager:
             st = vm["state"]
             if st in (REQUESTED, PROVISIONING):
                 self._db.set_state(vm["id"], ERROR, "interrupted by restart")
+                self._db.set_progress(vm["id"], None)
                 continue
             if st in (RUNNING, STOPPED):
                 try:
@@ -134,6 +135,7 @@ class VMManager:
             mac, ip = self._alloc_mac_ip()
             vm_id = self._db.create_vm(user["id"], label, vcpus, mem_mb,
                                        disk_gb, mac, ip, settings.GUEST_VNC_PORT)
+        self._db.set_progress(vm_id, "Queued — waiting for a build slot…")
         self._db.audit(user["id"], "vm.request",
                        f"vm-{vm_id} {vcpus}c/{mem_mb}M/{disk_gb}G")
         await self._queue.put(vm_id)
@@ -149,6 +151,7 @@ class VMManager:
         if vm is None or vm["state"] != REQUESTED:
             return
         self._db.set_state(vm_id, PROVISIONING)
+        self._db.set_progress(vm_id, "Creating disk and starting the VM…")
         try:
             await self._prov.create(name=vm["name"], vcpus=vm["vcpus"],
                                     mem_mb=vm["mem_mb"], disk_gb=vm["disk_gb"],
@@ -157,6 +160,7 @@ class VMManager:
             logger.exception("provision (create) failed %s", vm["name"])
             await self._fail(vm, exc)
             return
+        self._db.set_progress(vm_id, "Booting — waiting for the desktop…")
         self._spawn(self._await_ready(vm))
 
     async def _await_ready(self, vm: dict) -> None:
@@ -169,6 +173,7 @@ class VMManager:
             await self._fail(vm, exc)
             return
         self._db.set_state(vm["id"], RUNNING)
+        self._db.set_progress(vm["id"], None)        # settled -> no stage to show
         self._db.audit(vm["owner_id"], "vm.running", vm["name"])
         logger.info("provisioned %s -> %s:%s",
                     vm["name"], vm["ip_addr"], vm["vnc_port"])
@@ -179,6 +184,7 @@ class VMManager:
             await self._prov.destroy(name=vm["name"], mac=vm["mac"],
                                      ip=vm["ip_addr"])
         self._db.set_state(vm["id"], ERROR, str(exc)[:200])
+        self._db.set_progress(vm["id"], None)        # settled -> no stage to show
         self._db.audit(vm["owner_id"], "vm.error", f"{vm['name']}: {exc}")
 
     async def start_vm(self, user: dict, vm_id: int) -> dict:
@@ -218,13 +224,23 @@ class VMManager:
         self._db.delete_vm(vm_id)
         self._db.audit(user["id"], "vm.delete", vm["name"])
 
-    def mint_session(self, user: dict, vm_id: int) -> str:
+    def mint_session(self, user: dict, vm_id: int, kind: str = "vnc") -> str:
+        """Issue a one-time, VM-bound WS token.
+
+        kind="vnc"     — the desktop bridge; the VM must be RUNNING.
+        kind="console" — the live serial boot log; allowed while PROVISIONING
+                         or RUNNING (the whole point is to watch a VM boot).
+        """
         vm = self._require(user, vm_id)
-        if vm["state"] != RUNNING:
+        if kind == "console":
+            if vm["state"] not in (PROVISIONING, RUNNING):
+                raise Conflict("console is only available while a VM is booting or running")
+        elif vm["state"] != RUNNING:
             raise Conflict("VM is not running")
         return self._sessions.issue(Binding(
             username=user["username"], vm_id=vm_id,
-            host=vm["ip_addr"], port=vm["vnc_port"]))
+            host=vm["ip_addr"], port=vm["vnc_port"],
+            kind=kind, name=vm["name"]))
 
 
 def _public(vm: dict, is_admin: bool = False) -> dict:
@@ -236,7 +252,7 @@ def _public(vm: dict, is_admin: bool = False) -> dict:
     """
     d = {k: vm[k] for k in
          ("id", "label", "vcpus", "mem_mb", "disk_gb", "state",
-          "error_msg", "created_at")}
+          "error_msg", "progress", "created_at")}
     if d["error_msg"] and not is_admin:
         d["error_msg"] = "Provisioning failed — contact an administrator."
     return d

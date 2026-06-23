@@ -14,6 +14,7 @@
 // ---------- state ----------
 let jwt = null;        // bearer token, memory only
 let rfb = null;        // active noVNC connection
+let consoleWS = null;  // active boot-log WebSocket
 let pollTimer = null;  // dashboard refresh while any VM is building
 
 // ---------- helpers ----------
@@ -55,7 +56,8 @@ async function detail(res, fallback) {
 }
 
 // ---------- views ----------
-const views = { login: $('view-login'), dashboard: $('view-dashboard'), viewer: $('view-viewer') };
+const views = { login: $('view-login'), dashboard: $('view-dashboard'),
+                viewer: $('view-viewer'), console: $('view-console') };
 
 function showView(name) {
     for (const [key, el] of Object.entries(views)) el.hidden = key !== name;
@@ -157,6 +159,10 @@ function renderVMs(vms) {
                 h('h3', 'card-title', vm.label),
                 h('span', `badge ${cls}`, text)),
             h('p', 'card-body', `${vm.vcpus} vCPU · ${GB(vm.mem_mb)} GB RAM · ${vm.disk_gb} GB disk`));
+        // While a VM is queued/building, show the live provisioning stage so the
+        // user sees what it's doing rather than guessing whether it's hung.
+        if (['REQUESTED', 'PROVISIONING'].includes(vm.state) && vm.progress)
+            card.append(h('p', 'card-progress', vm.progress));
         if (vm.state === 'ERROR' && vm.error_msg)
             card.append(h('p', 'card-err', vm.error_msg));
 
@@ -167,6 +173,10 @@ function renderVMs(vms) {
         } else if (vm.state === 'STOPPED') {
             actions.append(button('Start', 'btn--card', () => lifecycle(vm.id, 'start')));
         }
+        // Live boot log: available while booting or running, so users can watch
+        // a build progress and diagnose a slow/stuck boot.
+        if (['PROVISIONING', 'RUNNING'].includes(vm.state))
+            actions.append(button('Logs', 'btn--ghost', () => showConsole(vm.id, vm.label)));
         if (!['PROVISIONING', 'REQUESTED', 'DELETING'].includes(vm.state))
             actions.append(button('Delete', 'btn--ghost btn--danger', () => destroy(vm.id, vm.label)));
         if (actions.childElementCount) card.append(actions);
@@ -305,6 +315,84 @@ async function connect(vmId) {
 }
 
 $('disconnect').addEventListener('click', () => { if (rfb) rfb.disconnect(); });
+
+// ---------- console (live boot log) ----------
+// consoleCtx tracks the panel target across reconnects; `closing` guards the
+// teardown so a user-initiated close doesn't trigger an auto-reconnect.
+let consoleCtx = null;
+const CONSOLE_MAX_RETRIES = 5;
+
+function showConsole(vmId, label) {
+    consoleCtx = { vmId, label, attempts: 0, closing: false };
+    showView('console');
+    $('console-title').textContent = `Boot log — ${label}`;
+    $('console-log').textContent = '';
+    openConsoleStream();
+}
+
+async function openConsoleStream() {
+    const ctx = consoleCtx;
+    if (!ctx || ctx.closing) return;
+    setConsoleStatus('Connecting…', 'badge--pending');
+    $('console-reconnect').hidden = true;
+
+    let res;
+    try { res = await api(`/vms/${ctx.vmId}/console-session`, { method: 'POST' }); }
+    catch { return; }                       // 401 handled centrally by api()
+    if (consoleCtx !== ctx || ctx.closing) return;   // view changed mid-await
+    if (!res.ok) { onConsoleDrop(await detail(res, 'console unavailable')); return; }
+    const { session_token } = await res.json();
+
+    // Mint is single-use + console-kind-bound server-side; the bare token in the
+    // URL never touches storage or history.
+    const log = $('console-log');
+    consoleWS = new WebSocket(`wss://${location.host}/ck/console?session_token=${session_token}`);
+    consoleWS.addEventListener('open', () => { ctx.attempts = 0; setConsoleStatus('Streaming', 'badge--active'); });
+    consoleWS.addEventListener('message', (ev) => {
+        // Stay pinned to the bottom only if the user is already there, so a
+        // manual scroll-back to read earlier output isn't yanked away.
+        const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+        log.textContent += ev.data;
+        // Cap the buffer so a long stream can't grow the DOM node unboundedly.
+        if (log.textContent.length > 200000) log.textContent = log.textContent.slice(-160000);
+        if (atBottom) log.scrollTop = log.scrollHeight;
+    });
+    consoleWS.addEventListener('close', () => { consoleWS = null; onConsoleDrop(); });
+    // 'error' is always followed by 'close', which drives reconnect — no-op here.
+}
+
+// A drop auto-reconnects a few times: this transparently covers the brief
+// window right after "build" where the domain isn't attachable yet, plus any
+// transient blip. After the cap, we stop and offer a manual Reconnect.
+function onConsoleDrop(msg) {
+    if (!consoleCtx || consoleCtx.closing) return;
+    if (consoleCtx.attempts < CONSOLE_MAX_RETRIES) {
+        consoleCtx.attempts += 1;
+        setConsoleStatus(`Reconnecting… (${consoleCtx.attempts}/${CONSOLE_MAX_RETRIES})`, 'badge--pending');
+        setTimeout(() => openConsoleStream(), 1500);
+    } else {
+        setConsoleStatus(msg || 'Disconnected', 'badge--down');
+        $('console-reconnect').hidden = false;
+    }
+}
+
+function setConsoleStatus(text, cls) {
+    $('console-status').className = `badge ${cls || ''}`.trim();
+    $('console-status').textContent = text;
+}
+
+function closeConsole() {
+    if (consoleCtx) consoleCtx.closing = true;
+    if (consoleWS) { consoleWS.close(); consoleWS = null; }
+    consoleCtx = null;
+    showView('dashboard');
+    refresh();
+}
+
+$('console-close').addEventListener('click', closeConsole);
+$('console-reconnect').addEventListener('click', () => {
+    if (consoleCtx) { consoleCtx.attempts = 0; openConsoleStream(); }
+});
 
 // ---------- start ----------
 showView('login');

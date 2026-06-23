@@ -29,11 +29,19 @@ class Binding:
     The browser never names a VNC address — it presents a token, and the
     bridge dials whatever this binding says. That makes 'point the bridge at
     an arbitrary host' impossible by construction.
+
+    `kind` distinguishes the two WebSocket surfaces a token can open: "vnc"
+    (the VNC byte bridge, which dials host:port) and "console" (the serial
+    boot-log stream, which attaches to the libvirt domain `name`). The /ws and
+    /console endpoints each reject a token of the wrong kind, so a console
+    token can't be replayed against the VNC bridge or vice versa.
     """
     username: str
     vm_id: int
     host: str
     port: int
+    kind: str = "vnc"
+    name: str = ""
 
 
 class AuthService:
