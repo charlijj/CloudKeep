@@ -178,7 +178,7 @@ const BADGE = {
     PROVISIONING: ['building…', 'badge--pending'],
     REQUESTED: ['queued', 'badge--pending'],
     STOPPED: ['stopped', 'badge--down'],
-    ERROR: ['error', 'badge--down'],
+    ERROR: ['error', 'badge--down badge--error'],
     DELETING: ['deleting…', 'badge--down'],
 };
 
