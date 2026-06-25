@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRY_MINUTES: int = 60
     WS_TOKEN_EXPIRY_SECONDS: int = 30
-    ALLOWED_ORIGIN: str = "https://cloudkeep.duckdns.org"
+    ALLOWED_ORIGIN: str = "https://cloudkeep-auth.duckdns.org"
     AUTH_RATE_LIMIT: str = "5/minute"
     PROVISION_RATE_LIMIT: str = "5/hour"
 

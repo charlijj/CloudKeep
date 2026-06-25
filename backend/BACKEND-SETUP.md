@@ -127,7 +127,7 @@ chmod 600 /opt/cloudkeep/backend/src/.env
 ```
 
 > `ALLOWED_ORIGIN` **must** match the edge domain exactly, or CORS rejects the
-> browser's API calls. Default is `https://cloudkeep.duckdns.org`; set it to
+> browser's API calls. Default is `https://cloudkeep-auth.duckdns.org`; set it to
 > your real domain.
 
 ## 5. Smoke test in fake mode
