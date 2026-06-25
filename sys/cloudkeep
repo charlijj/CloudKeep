@@ -40,7 +40,10 @@ server {
     limit_conn cloudkeep_conn 10;
 
     # --- Restrict HTTP methods ---
-    if ($request_method !~ ^(GET|HEAD|POST|OPTIONS)$) {
+    # DELETE is required by the control plane (DELETE /ck/vms/{id} tears a VM
+    # down). Without it nginx returns 405 before proxying and the request never
+    # reaches controld. PUT/PATCH/etc. remain blocked — the API doesn't use them.
+    if ($request_method !~ ^(GET|HEAD|POST|DELETE|OPTIONS)$) {
         return 405;
     }
 

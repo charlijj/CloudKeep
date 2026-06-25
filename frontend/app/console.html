@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>cloudkeep · boot log</title>
+    <link rel="stylesheet" href="/assets/style.css">
+</head>
+<!-- Standalone boot-log window, opened with window.open() from the dashboard so
+     the user can watch a VM boot while using its desktop in the main window.
+     Same origin as the SPA, so it inherits the /app/ CSP (connect-src wss://…)
+     the console WebSocket needs, and may call back into window.opener to mint
+     tokens. It holds NO JWT of its own — see assets/console.js. -->
+<body data-view="console" class="console-popup">
+    <div class="viewer-bar">
+        <span class="brand-mark" aria-hidden="true">&#9635;</span>
+        <span id="console-title" class="viewer-status">Boot log</span>
+        <span id="console-status" class="badge">Connecting&hellip;</span>
+        <button class="btn btn--ghost" id="console-reconnect" type="button" hidden>reconnect</button>
+        <button class="btn btn--ghost" id="console-close" type="button">close</button>
+    </div>
+    <pre id="console-log" class="console-log" aria-live="polite"></pre>
+    <script type="module" src="/assets/console.js"></script>
+</body>
+</html>

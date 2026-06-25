@@ -84,8 +84,22 @@ main { flex: 1; padding: 40px 0; }
              border-radius: var(--radius); padding: 24px; display: flex; flex-direction: column; gap: 14px; }
 .auth-title { font-size: 16px; margin-bottom: 6px; }
 
+/* ---------- dashboard: resource meters ---------- */
+.res { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+       gap: 16px 32px; margin-bottom: 24px; }
+.res-group { display: flex; flex-direction: column; gap: 9px; }
+.res-group-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+.meter-head { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+.meter-head b { color: var(--text); font-weight: 600; }
+.meter { height: 6px; border-radius: 3px; background: var(--surface-2);
+         border: 1px solid var(--border); overflow: hidden; display: flex; }
+.meter > span { height: 100%; }
+.meter-fill { background: var(--text-muted); }
+.meter-fill--warn { background: var(--danger); }
+.meter-seg--alloc { background: var(--text-muted); }     /* host: in use by VMs */
+.meter-seg--reserve { background: var(--border); }       /* host: reserved for the host itself */
+
 /* ---------- dashboard ---------- */
-.resbar { font-size: 12px; color: var(--text-muted); margin-bottom: 16px; }
 .builder { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
            padding: 20px; margin-bottom: 24px; display: flex; flex-direction: column; gap: 16px; max-width: 520px; }
 
@@ -99,10 +113,10 @@ body[data-view="viewer"] .site-header, body[data-view="viewer"] main { display: 
 .viewer-screen { flex: 1; min-height: 0; background: #000; overflow: hidden; position: relative; }
 .viewer-screen > :first-child { width: 100% !important; height: 100% !important; }
 
-/* ---------- console (full-bleed live boot log) ---------- */
+/* ---------- console (live boot log — its own pop-up window, app/console.html) ----------
+   The pop-up <body> carries data-view="console", so it fills the window and the
+   log scrolls inside; .viewer-bar + .console-log are reused as the body's flex children. */
 body[data-view="console"] { height: 100vh; overflow: hidden; }
-body[data-view="console"] .site-header, body[data-view="console"] main { display: none !important; }
-.view-console { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .console-log { flex: 1; min-height: 0; margin: 0; padding: 12px 16px; overflow: auto;
                background: #000; color: var(--text); font: 12px/1.45 var(--mono);
                white-space: pre-wrap; overflow-wrap: anywhere; }
