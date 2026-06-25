@@ -7,7 +7,8 @@
 :root {
     --bg: #0d1117; --surface: #161b22; --surface-2: #1c2128;
     --border: #30363d; --border-soft: #21262d;
-    --text: #e6edf3; --text-muted: #8b949e; --danger: #f85149;
+    --text: #e6edf3; --text-muted: #8b949e;
+    --danger: #f85149; --success: #3fb950; --warn: #d29922;
     --radius: 6px; --container: 1100px;
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
@@ -37,16 +38,24 @@ main { flex: 1; padding: 40px 0; }
 
 /* ---------- primitives ---------- */
 .btn { font: 13px var(--mono); color: var(--text); background: var(--surface-2);
-       border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 14px; cursor: pointer; }
+       border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 14px; cursor: pointer;
+       transition: border-color .15s ease, background-color .15s ease, color .15s ease, transform .08s ease; }
 .btn:hover:not(:disabled) { border-color: var(--text-muted); }
+.btn:active:not(:disabled) { transform: translateY(1px); }   /* tactile press */
 .btn:disabled { color: var(--text-muted); cursor: not-allowed; }
+
+/* Visible keyboard focus on every interactive control (mouse clicks stay clean
+   via :focus-visible). */
+.btn:focus-visible, .step:focus-visible, .field-input:focus-visible,
+.slider:focus-visible, a:focus-visible { outline: 2px solid var(--text-muted); outline-offset: 2px; }
 .btn--card { flex: 1; text-align: center; text-decoration: none; display: block; }
 .btn--ghost { background: transparent; padding: 4px 10px; font-size: 12px; }
 .btn--danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
 
 .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
-.card:hover { border-color: var(--text-muted); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px;
+        transition: border-color .15s ease, transform .15s ease; }
+.card:hover { border-color: var(--text-muted); transform: translateY(-1px); }
 .card-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
 .card-title { font-size: 14px; overflow-wrap: anywhere; }
 .card-body { color: var(--text-muted); font-size: 13px; }
@@ -56,11 +65,18 @@ main { flex: 1; padding: 40px 0; }
 .card-actions { display: flex; gap: 8px; margin-top: 12px; }
 .card > .btn--card { margin-top: 12px; }   /* landing page: button without an actions row */
 
-.badge { font-size: 11px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 10px;
-         color: var(--text-muted); white-space: nowrap; }
+/* Status pill with a leading colour dot, so VM health is scannable at a glance.
+   The dot colour is the only semantic add; the pill itself stays monochrome. */
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; padding: 2px 8px;
+         border: 1px solid var(--border); border-radius: 10px; color: var(--text-muted); white-space: nowrap; }
+.badge::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); }
 .badge--active { color: var(--text); border-color: var(--text-muted); }
+.badge--active::before { background: var(--success); }
 .badge--pending { background: var(--surface-2); }
+.badge--pending::before { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
 .badge--down { background: var(--surface-2); border-style: dashed; }
+.badge--error::before { background: var(--danger); }   /* pairs with badge--down for the box */
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field-label { font-size: 12px; color: var(--text-muted); }
@@ -93,7 +109,7 @@ main { flex: 1; padding: 40px 0; }
 .meter-head b { color: var(--text); font-weight: 600; }
 .meter { height: 6px; border-radius: 3px; background: var(--surface-2);
          border: 1px solid var(--border); overflow: hidden; display: flex; }
-.meter > span { height: 100%; }
+.meter > span { height: 100%; transition: width .4s ease; }   /* bars glide on refresh */
 .meter-fill { background: var(--text-muted); }
 .meter-fill--warn { background: var(--danger); }
 .meter-seg--alloc { background: var(--text-muted); }     /* host: in use by VMs */
@@ -156,4 +172,12 @@ body[data-view="console"] { height: 100vh; overflow: hidden; }
 .step { flex: none; width: 28px; height: 28px; font: 15px var(--mono); line-height: 1;
         color: var(--text); background: var(--surface-2); border: 1px solid var(--border);
         border-radius: var(--radius); cursor: pointer; }
+.step { transition: border-color .15s ease, transform .08s ease; }
 .step:hover { border-color: var(--text-muted); }
+.step:active { transform: translateY(1px); }
+
+/* Honour users who prefer less motion: drop the build pulse, hovers, presses. */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important;
+                             transition-duration: 0.001ms !important; }
+}
