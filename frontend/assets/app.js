@@ -14,7 +14,6 @@
 // ---------- state ----------
 let jwt = null;        // bearer token, memory only
 let rfb = null;        // active noVNC connection
-let consoleWS = null;  // active boot-log WebSocket
 let pollTimer = null;  // dashboard refresh while any VM is building
 
 // ---------- helpers ----------
@@ -57,7 +56,7 @@ async function detail(res, fallback) {
 
 // ---------- views ----------
 const views = { login: $('view-login'), dashboard: $('view-dashboard'),
-                viewer: $('view-viewer'), console: $('view-console') };
+                viewer: $('view-viewer') };
 
 function showView(name) {
     for (const [key, el] of Object.entries(views)) el.hidden = key !== name;
@@ -127,15 +126,51 @@ async function refresh() {
     }
 }
 
+// One meter = a label row (name + value) over a thin track holding one or more
+// proportional segments. Built with createElement (no innerHTML), widths set
+// via .style so server numbers never become markup.
+function meter(name, valueText, segments) {
+    const bar = h('div', 'meter');
+    for (const s of segments) {
+        const seg = h('span', s.cls);
+        seg.style.width = `${Math.max(0, Math.min(100, s.pct))}%`;
+        bar.append(seg);
+    }
+    return h('div', null, h('div', 'meter-head', h('span', null, name), h('b', null, valueText)), bar);
+}
+
 function renderResources(r) {
-    const you = r.you, host = r.host;
-    $('resbar').textContent =
-        `you: ${you.used_vms}/${you.max_vms} VMs · ` +
-        `${you.vcpus.used}/${you.vcpus.quota} vCPU · ` +
-        `${GB(you.mem_mb.used)}/${GB(you.mem_mb.quota)} GB RAM · ` +
-        `${you.disk_gb.used}/${you.disk_gb.quota} GB disk` +
-        `   —   host free: ${host.vcpus.free} vCPU · ${GB(host.mem_mb.free)} GB · ${host.disk_gb.free} GB`;
     latestResources = r;   // builder caps its sliders from the same snapshot
+    const you = r.you, host = r.host;
+    const pct = (used, total) => (total > 0 ? (used / total) * 100 : 0);
+
+    // Your usage: a single fill of used/quota, turning danger-red near the cap.
+    const mine = (name, used, quota, unit) => {
+        const p = pct(used, quota);
+        return meter(name, `${used} / ${quota} ${unit}`,
+                     [{ pct: p, cls: p >= 90 ? 'meter-fill meter-fill--warn' : 'meter-fill' }]);
+    };
+    // Host: stacked allocated + reserved over total; the empty remainder is the
+    // free pool. `c` converts MB->GB for the memory row, identity otherwise.
+    const pool = (name, q, unit, c = (x) => x) =>
+        meter(name, `${c(q.free)} / ${c(q.total)} ${unit} free`, [
+            { pct: pct(q.allocated, q.total), cls: 'meter-seg--alloc' },
+            { pct: pct(q.reserved, q.total), cls: 'meter-seg--reserve' },
+        ]);
+
+    const yours = h('div', 'res-group',
+        h('div', 'res-group-title', `your allocation · ${you.used_vms}/${you.max_vms} machines`),
+        mine('vCPU', you.vcpus.used, you.vcpus.quota, 'vCPU'),
+        mine('memory', GB(you.mem_mb.used), GB(you.mem_mb.quota), 'GB'),
+        mine('disk', you.disk_gb.used, you.disk_gb.quota, 'GB'));
+
+    const server = h('div', 'res-group',
+        h('div', 'res-group-title', 'host availability'),
+        pool('vCPU', host.vcpus, 'vCPU'),
+        pool('memory', host.mem_mb, 'GB', GB),
+        pool('disk', host.disk_gb, 'GB'));
+
+    $('resbar').replaceChildren(yours, server);
 }
 
 const BADGE = {
@@ -187,7 +222,14 @@ function renderVMs(vms) {
 function button(text, cls, onClick) {
     const b = h('button', `btn ${cls}`, text);
     b.type = 'button';
-    b.addEventListener('click', () => { b.disabled = true; onClick(); });
+    // Disable for the duration of the action to prevent double-fire, then
+    // re-enable. Actions that refresh()/navigate replace this node anyway; for
+    // fire-and-forget ones (Logs just opens a pop-up, no refresh) this is what
+    // lets the button work again without waiting for a re-render.
+    b.addEventListener('click', async () => {
+        b.disabled = true;
+        try { await onClick(); } finally { b.disabled = false; }
+    });
     return b;
 }
 
@@ -317,82 +359,35 @@ async function connect(vmId) {
 $('disconnect').addEventListener('click', () => { if (rfb) rfb.disconnect(); });
 
 // ---------- console (live boot log) ----------
-// consoleCtx tracks the panel target across reconnects; `closing` guards the
-// teardown so a user-initiated close doesn't trigger an auto-reconnect.
-let consoleCtx = null;
-const CONSOLE_MAX_RETRIES = 5;
-
+// The boot log opens in a SEPARATE browser window (app/console.html) so it can
+// be watched alongside the VM's desktop. window.open is called synchronously
+// from the Logs click so pop-up blockers allow it; the window name is keyed to
+// the VM so re-clicking focuses the existing window instead of spawning more.
 function showConsole(vmId, label) {
-    consoleCtx = { vmId, label, attempts: 0, closing: false };
-    showView('console');
-    $('console-title').textContent = `Boot log — ${label}`;
-    $('console-log').textContent = '';
-    openConsoleStream();
-}
-
-async function openConsoleStream() {
-    const ctx = consoleCtx;
-    if (!ctx || ctx.closing) return;
-    setConsoleStatus('Connecting…', 'badge--pending');
-    $('console-reconnect').hidden = true;
-
-    let res;
-    try { res = await api(`/vms/${ctx.vmId}/console-session`, { method: 'POST' }); }
-    catch { return; }                       // 401 handled centrally by api()
-    if (consoleCtx !== ctx || ctx.closing) return;   // view changed mid-await
-    if (!res.ok) { onConsoleDrop(await detail(res, 'console unavailable')); return; }
-    const { session_token } = await res.json();
-
-    // Mint is single-use + console-kind-bound server-side; the bare token in the
-    // URL never touches storage or history.
-    const log = $('console-log');
-    consoleWS = new WebSocket(`wss://${location.host}/ck/console?session_token=${session_token}`);
-    consoleWS.addEventListener('open', () => { ctx.attempts = 0; setConsoleStatus('Streaming', 'badge--active'); });
-    consoleWS.addEventListener('message', (ev) => {
-        // Stay pinned to the bottom only if the user is already there, so a
-        // manual scroll-back to read earlier output isn't yanked away.
-        const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
-        log.textContent += ev.data;
-        // Cap the buffer so a long stream can't grow the DOM node unboundedly.
-        if (log.textContent.length > 200000) log.textContent = log.textContent.slice(-160000);
-        if (atBottom) log.scrollTop = log.scrollHeight;
-    });
-    consoleWS.addEventListener('close', () => { consoleWS = null; onConsoleDrop(); });
-    // 'error' is always followed by 'close', which drives reconnect — no-op here.
-}
-
-// A drop auto-reconnects a few times: this transparently covers the brief
-// window right after "build" where the domain isn't attachable yet, plus any
-// transient blip. After the cap, we stop and offer a manual Reconnect.
-function onConsoleDrop(msg) {
-    if (!consoleCtx || consoleCtx.closing) return;
-    if (consoleCtx.attempts < CONSOLE_MAX_RETRIES) {
-        consoleCtx.attempts += 1;
-        setConsoleStatus(`Reconnecting… (${consoleCtx.attempts}/${CONSOLE_MAX_RETRIES})`, 'badge--pending');
-        setTimeout(() => openConsoleStream(), 1500);
-    } else {
-        setConsoleStatus(msg || 'Disconnected', 'badge--down');
-        $('console-reconnect').hidden = false;
+    const url = `/app/console.html#vm=${encodeURIComponent(vmId)}&label=${encodeURIComponent(label)}`;
+    const features = 'popup=yes,width=940,height=620,menubar=no,toolbar=no,' +
+                     'location=no,status=no,resizable=yes,scrollbars=yes';
+    const win = window.open(url, `ckconsole_${vmId}`, features);
+    if (!win) {
+        showError('dashboard-error', 'Pop-up blocked — allow pop-ups for this site to open the boot log.');
+        return;
     }
+    try { win.focus(); } catch { /* cross-window focus can throw in some browsers */ }
 }
 
-function setConsoleStatus(text, cls) {
-    $('console-status').className = `badge ${cls || ''}`.trim();
-    $('console-status').textContent = text;
-}
-
-function closeConsole() {
-    if (consoleCtx) consoleCtx.closing = true;
-    if (consoleWS) { consoleWS.close(); consoleWS = null; }
-    consoleCtx = null;
-    showView('dashboard');
-    refresh();
-}
-
-$('console-close').addEventListener('click', closeConsole);
-$('console-reconnect').addEventListener('click', () => {
-    if (consoleCtx) { consoleCtx.attempts = 0; openConsoleStream(); }
-});
+// Called BY the console pop-up (same origin) to obtain a single-use,
+// console-bound token. The pop-up never holds the JWT — it stays in this
+// window's memory — so it delegates minting here. Returns the token string, or
+// null if minting failed (api() centralises 401 -> session-expired handling).
+window.__ckMintConsole = async (vmId) => {
+    try {
+        const res = await api(`/vms/${vmId}/console-session`, { method: 'POST' });
+        if (!res.ok) return null;
+        return (await res.json()).session_token;
+    } catch {
+        return null;   // unauthorized / network — the pop-up shows a retry state
+    }
+};
 
 // ---------- start ----------
 showView('login');
