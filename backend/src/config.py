@@ -40,6 +40,31 @@ class Settings(BaseSettings):
     CONSOLE_MAX_STREAMS: int = 8
     CONSOLE_QUEUE_MAX: int = 1024
 
+    # --- Self-service account requests (admin-approved) ---
+    # The public landing form POSTs here. A request is INERT: it only enqueues a
+    # pending row — it creates no user and grants no access. Only the host-side
+    # review_requests.py CLI (run by an admin) turns a request into a real user.
+    # Fail-closed gate: an invite code is REQUIRED, and if no codes are
+    # configured the endpoint rejects everything (signups closed by default).
+    ACCOUNT_REQUESTS_ENABLED: bool = True
+    SIGNUP_INVITE_CODES: str = ""        # comma-separated; empty => signups closed
+    SIGNUP_RATE_LIMIT: str = "5/hour"    # per-IP, at controld (edge throttles too)
+    MAX_PENDING_REQUESTS: int = 10       # global cap on the pending queue
+    MAX_PENDING_PER_IP: int = 1          # pending requests one IP may hold at once
+
+    # --- Email notifications (GROUNDWORK — disabled) ---
+    # Fully scaffolded but inert: with SMTP_ENABLED=false (default) notify.py only
+    # logs what it WOULD send and opens no network connection. Set SMTP_ENABLED
+    # plus the SMTP_* values in .env to turn it on later — no code change needed.
+    SMTP_ENABLED: bool = False
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""                  # e.g. "CloudKeep <no-reply@example.com>"
+    SMTP_USE_TLS: bool = True            # STARTTLS on SMTP_PORT
+    PORTAL_URL: str = ""                 # email link base; defaults to ALLOWED_ORIGIN
+
     # --- Persistence ---
     DB_PATH: str = "/var/lib/cloudkeep/db/cloudkeep.db"
 
@@ -85,6 +110,16 @@ class Settings(BaseSettings):
     @property
     def use_fake(self) -> bool:
         return self.LIBVIRT_URI.strip().lower() == "fake"
+
+    @property
+    def invite_codes(self) -> set[str]:
+        """Parsed set of valid invite codes (empty => signups closed)."""
+        return {c.strip() for c in self.SIGNUP_INVITE_CODES.split(",") if c.strip()}
+
+    @property
+    def portal_url(self) -> str:
+        """Base URL for links in notifications; falls back to the edge origin."""
+        return (self.PORTAL_URL or self.ALLOWED_ORIGIN).rstrip("/")
 
 
 settings = Settings()

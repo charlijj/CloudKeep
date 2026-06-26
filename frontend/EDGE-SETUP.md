@@ -251,6 +251,18 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # Public account-request intake (landing-page form). Unauthenticated, so
+    # throttle hard here; controld adds an invite-code gate + per-IP rate limit
+    # + queue caps. Exact match wins over the generic /ck/ proxy below.
+    location = /ck/account-requests {
+        limit_req zone=cloudkeep_req burst=2 nodelay;
+        proxy_pass http://10.10.10.2:8000/account-requests;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     # VNC WebSocket bridge.
     location /ck/ws {
         proxy_pass http://10.10.10.2:8000/ws;

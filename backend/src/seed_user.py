@@ -13,9 +13,9 @@ import argparse
 import getpass
 import sys
 
-from auth_core import AuthService
 from config import settings
 from db import Database
+from useradmin import upsert_user
 
 
 def main() -> int:
@@ -34,16 +34,11 @@ def main() -> int:
         return 1
 
     db = Database(settings.DB_PATH)
-    pw_hash = AuthService(settings).hash_password(pw)
     role = "admin" if args.admin else "user"
-    if db.get_user(args.username):
-        db.update_user(args.username, pw_hash, role, args.max_vms,
-                       args.max_vcpus, args.max_mem_mb, args.max_disk_gb)
-        print(f"updated user '{args.username}' ({role})")
-    else:
-        db.create_user(args.username, pw_hash, role, args.max_vms,
-                       args.max_vcpus, args.max_mem_mb, args.max_disk_gb)
-        print(f"created user '{args.username}' ({role})")
+    action = upsert_user(db, settings, username=args.username, password=pw,
+                         role=role, max_vms=args.max_vms, max_vcpus=args.max_vcpus,
+                         max_mem_mb=args.max_mem_mb, max_disk_gb=args.max_disk_gb)
+    print(f"{action} user '{args.username}' ({role})")
     print(f"  quota: {args.max_vms} VMs, {args.max_vcpus} vCPU, "
           f"{args.max_mem_mb} MB RAM, {args.max_disk_gb} GB disk")
     return 0

@@ -17,6 +17,7 @@
     <main class="landing-main">
         <p class="landing-tagline">Self-hosted virtual desktops, on demand.</p>
         <a class="btn btn--hero" href="/app/">Enter Launch Portal</a>
+        <a class="btn btn--ghost" href="#request">Request access</a>
     </main>
 
     <a class="btn btn--learn" href="#about">Learn more about CloudKeep</a>
@@ -54,6 +55,70 @@
 
             <a class="btn btn--card" href="https://github.com/charlijj/CloudKeep"
                target="_blank" rel="noopener">View on GitHub</a>
+        </div>
+    </div>
+
+    <!-- Request access — pure HTML form, no JS (page CSP is script-src 'none').
+         Submits to controld via the edge; controld validates + queues an INERT
+         request and 303-redirects to one of the result modals below. -->
+    <div id="request" class="modal" role="dialog" aria-modal="true" aria-labelledby="request-title">
+        <a href="#" class="modal-backdrop" aria-label="Close"></a>
+        <div class="modal-box">
+            <a href="#" class="modal-close" aria-label="Close">&times;</a>
+            <h2 id="request-title" class="modal-title">Request access</h2>
+            <p>Enter your details and your invite code. An administrator reviews
+               every request — no account is created until it's approved.</p>
+            <form class="req-form" method="post" action="/ck/account-requests" autocomplete="off">
+                <!-- Honeypot: hidden from people; bots fill it and are dropped. -->
+                <div class="hp" aria-hidden="true">
+                    <label>Leave this field empty
+                        <input type="text" name="website" tabindex="-1" autocomplete="off"></label>
+                </div>
+                <label class="field"><span class="field-label">username</span>
+                    <input class="field-input" name="username" required minlength="3" maxlength="32"
+                           pattern="[A-Za-z0-9_-]{3,32}" title="3–32 chars: letters, digits, '_' or '-'"></label>
+                <label class="field"><span class="field-label">first name</span>
+                    <input class="field-input" name="first_name" required maxlength="40"></label>
+                <label class="field"><span class="field-label">last name</span>
+                    <input class="field-input" name="last_name" required maxlength="40"></label>
+                <label class="field"><span class="field-label">email</span>
+                    <input class="field-input" name="email" type="email" required maxlength="254"
+                           pattern="[^@\s]+@[^@\s]+\.[^@\s]+" title="you@example.com"></label>
+                <label class="field"><span class="field-label">invite code</span>
+                    <input class="field-input" name="invite_code" required maxlength="100"></label>
+                <button class="btn" type="submit">Submit request</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Result modals the account-request endpoint redirects to (#account-…). -->
+    <div id="account-requested" class="modal" role="dialog" aria-modal="true" aria-labelledby="req-ok-title">
+        <a href="#" class="modal-backdrop" aria-label="Close"></a>
+        <div class="modal-box">
+            <a href="#" class="modal-close" aria-label="Close">&times;</a>
+            <h2 id="req-ok-title" class="modal-title">Request received</h2>
+            <p>Thanks — your request is pending review. An administrator will set
+               up your account and share your sign-in details with you directly.</p>
+            <a class="btn btn--card" href="#">Done</a>
+        </div>
+    </div>
+    <div id="account-error" class="modal" role="dialog" aria-modal="true" aria-labelledby="req-err-title">
+        <a href="#" class="modal-backdrop" aria-label="Close"></a>
+        <div class="modal-box">
+            <a href="#" class="modal-close" aria-label="Close">&times;</a>
+            <h2 id="req-err-title" class="modal-title">Couldn't submit that</h2>
+            <p>Please check your details and invite code, then try again. If you've
+               already requested access, it may still be pending review.</p>
+            <a class="btn btn--card" href="#request">Back to the form</a>
+        </div>
+    </div>
+    <div id="account-closed" class="modal" role="dialog" aria-modal="true" aria-labelledby="req-closed-title">
+        <a href="#" class="modal-backdrop" aria-label="Close"></a>
+        <div class="modal-box">
+            <a href="#" class="modal-close" aria-label="Close">&times;</a>
+            <h2 id="req-closed-title" class="modal-title">Requests are closed</h2>
+            <p>Account requests aren't being accepted right now. Please contact
+               your administrator.</p>
         </div>
     </div>
 </body>
