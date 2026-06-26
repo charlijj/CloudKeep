@@ -159,7 +159,9 @@ Replace the bootstrap with the full config below, then reload.
 > 2. HTTPS server → `server_name`
 > 3. HTTPS server → `ssl_certificate` + `ssl_certificate_key` (`live/<domain>/…`)
 > 4. `/app/` CSP → `connect-src … wss://<domain>` — **if this is wrong, login
->    works but the VNC WebSocket is silently blocked by CSP.**
+>    works but the VNC + boot-log WebSockets are silently blocked by CSP.**
+>    (The boot-log pop-up `app/console.html` is under `/app/`, so it inherits
+>    this same CSP — one `connect-src` covers both WebSockets.)
 >
 > Don't delete the two `ssl_certificate*` lines when editing — without them
 > nginx fails with `no "ssl_certificate" is defined for the "listen ... ssl"`.
@@ -252,6 +254,21 @@ server {
     # VNC WebSocket bridge.
     location /ck/ws {
         proxy_pass http://10.10.10.2:8000/ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host       $host;
+        proxy_set_header X-Real-IP  $remote_addr;
+        proxy_buffering    off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    # Live serial-console (boot log) WebSocket — same upgrade/streaming setup as
+    # the VNC bridge; proxy_buffering off so boot-log lines arrive in real time.
+    # Omit this and the portal's Logs pop-up connects, then instantly drops.
+    location /ck/console {
+        proxy_pass http://10.10.10.2:8000/console;
         proxy_http_version 1.1;
         proxy_set_header Upgrade    $http_upgrade;
         proxy_set_header Connection "upgrade";
