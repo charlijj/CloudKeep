@@ -91,6 +91,12 @@ sudo usermod -aG libvirt,kvm app
 id app | tr ',' '\n' | grep -E 'libvirt|kvm'
 ```
 
+> The same `libvirt` group membership is what lets controld attach to a domain's
+> serial console (`openConsole`) for the portal's live **Logs** boot-log pop-up —
+> no extra privilege needed. How many of those streams may run at once, and the
+> per-stream buffer, are bounded by `CONSOLE_MAX_STREAMS` / `CONSOLE_QUEUE_MAX`
+> in `config.py` (sane defaults; override in `.env` only if you need to).
+
 ## 3. Runtime directories + SELinux
 
 controld writes its SQLite DB under `/var/lib/cloudkeep`; libvirt stores VM disk
@@ -257,10 +263,16 @@ curl -s https://cloudkeep-auth.duckdns.org/ck/health
 ```
 
 Then sign in at `https://cloudkeep-auth.duckdns.org/app/`, build a VM, and watch
-the card go `queued → building → ready`. If `building` ever ends in `error`,
-`journalctl -u cloudkeep-controld` has the provisioning failure (usually a
-missing golden image, SELinux label, or `clean-traffic` nwfilter — all covered
-in `HOSTSETUP.md`).
+the card go `queued → building → ready` (the card shows the live provisioning
+*stage* as it goes). Click **Logs** on a building or running card to open the
+serial boot-log pop-up and watch the kernel/systemd stream in real time. If
+`building` ever ends in `error`, `journalctl -u cloudkeep-controld` has the
+provisioning failure (usually a missing golden image, SELinux label, or
+`clean-traffic` nwfilter — all covered in `HOSTSETUP.md`).
+
+> The boot-log pop-up needs the edge to proxy `/ck/console` — that block is in
+> the repo's `sys/cloudkeep` and in `frontend/EDGE-SETUP.md` §7. If Logs opens
+> then instantly disconnects, the edge is missing that `location`.
 
 ## Managing users
 

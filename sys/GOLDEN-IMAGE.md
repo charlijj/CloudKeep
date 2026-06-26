@@ -326,8 +326,9 @@ sudo systemctl enable cloudkeep-firstboot.service
 
 Send the kernel + early-boot messages to the serial port (`ttyS0`) as well as
 the screen. This is what makes boot progress visible on the host — via `virsh
-console` and the planned live boot-log panel in the portal — without giving the
-guest any network surface.
+console` and the portal's live **Logs** boot-log pop-up (controld attaches to
+this serial console with libvirt `openConsole`) — without giving the guest any
+network surface.
 
 ```bash
 sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="console=tty1 console=ttyS0,115200"/' /etc/default/grub
@@ -336,7 +337,7 @@ sudo update-grub
 
 > `console=ttyS0,115200` (last `console=` wins for `/dev/console`) routes the
 > kernel + systemd boot stream to the serial port; libvirt captures it host-side
-> and the portal's live boot-log panel streams it to the browser. No getty is
+> and controld's `/console` streamer relays it to the browser pop-up. No getty is
 > enabled, so this is output-only — no interactive login over serial.
 >
 > **`quiet splash` is intentionally dropped** (the Ubuntu default sets it): the

@@ -214,7 +214,7 @@ sudo virsh pool-start cloudkeep
 
 ## 6. Golden image
 
-See **`GOLDEN-IMAGE.md`** — convert the existing soccer-vision-vm into
+See **`GOLDEN-IMAGE.md`** — build a minimal Ubuntu 24.04 into
 `/var/lib/cloudkeep/images/golden-v1.qcow2`. Required before any VM can be built.
 
 ## 7. Deploy controld
@@ -255,7 +255,8 @@ curl -s http://10.10.10.2:8000/health        # {"status":"ok","libvirt_ok":true,
 ```bash
 # On EC2 /etc/wireguard/wg0.conf: set the peer PublicKey to the HOST's host.pub
 sudo systemctl restart wg-quick@wg0
-# Deploy the updated vhost (adds the generic /ck/ proxy for /vms, /resources):
+# Deploy the updated vhost (the /ck/ proxy: /vms, /resources, the /ck/ws VNC and
+# /ck/console boot-log WebSockets, and DELETE in the method allowlist):
 sudo cp sys/cloudkeep /etc/nginx/sites-available/cloudkeep
 sudo nginx -t && sudo systemctl reload nginx
 # Deploy the frontend:
