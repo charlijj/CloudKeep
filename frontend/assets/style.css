@@ -166,6 +166,12 @@ body[data-view="console"] { height: 100vh; overflow: hidden; }
                line-height: 1; color: var(--text-muted); text-decoration: none; }
 .modal-close:hover { color: var(--text); }
 
+/* Request-access form: stack the reused .field rows; .hp hides the honeypot
+   from people (off-screen) while bots still fill it. */
+.req-form { display: flex; flex-direction: column; gap: 14px; text-align: left; margin-top: 16px; }
+.req-form .btn { margin-top: 4px; }
+.hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+
 /* ---------- builder steppers ---------- */
 .slider-row { display: flex; align-items: center; gap: 10px; }
 .slider-row .slider { flex: 1; }

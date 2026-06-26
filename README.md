@@ -53,6 +53,8 @@ edge permanently static.
 ### Request & data flow
 
 ```
+POST /ck/account-requests         → (public, invite-gated) queue an INERT signup request;
+                                    an admin approves it on the host (creates no user itself)
 POST /ck/auth/login               → JWT (held in browser memory only)
 GET  /ck/dashboard                → your VMs + host free pool + quota/usage (one round-trip)
 GET  /ck/resources                → host free pool + your quota/usage + sizing bounds
@@ -79,6 +81,7 @@ vice-versa, so the two streams can never be crossed.
 | Edge | NGINX TLS, `/ck/auth/` rate limit, strict headers, 444 catch-all | Internet scanning, brute force |
 | Tunnel | WireGuard host↔EC2; UFW admits `:8000` from the EC2 peer only | Reaching the control plane off-path |
 | Identity | bcrypt + JWT + one-time **VM+kind-bound** WS tokens (vnc/console can't be crossed); per-user quotas; ownership checks; audit log | VM creation without credentials; cross-user access |
+| Signup intake | Public account-request form is **inert** (enqueues a row, grants nothing); invite-code gate (fail-closed, constant-time), honeypot, strict validation, per-IP + global queue caps, edge + controld rate limits; only a host-side admin CLI mints the user | Self-registration, signup spam/DoS, privilege via the public surface |
 | Control plane | controld unprivileged (libvirt group), systemd sandbox, **libvirt API only — no shell**, server-generated VM names | Injection, privilege escalation |
 | Segmentation | nftables: guest→WAN allow, guest→all-RFC1918 drop, guest→host drop, guest↔guest isolated | A compromised guest pivoting to LAN/host/tunnel/tenants |
 | Anti-spoof | libvirt `clean-traffic` nwfilter pins each vNIC to its MAC+IP | ARP/IP spoofing between guests |
@@ -111,7 +114,11 @@ FastAPI dependencies, so every service is swappable and testable in isolation
 | `vmmanager.py` | `VMManager` — lifecycle state machine, allocation lock, provisioning queue, stage reporting |
 | `vnc_bridge.py` | `VNCBridge` — async TCP↔WebSocket byte relay (reused from v1, per-VM target) |
 | `console.py` | live serial-console streamer — libvirt `openConsole` on a daemon thread → bounded queue → browser; cleans ANSI/CR, caps concurrent streams |
-| `seed_user.py` | admin CLI to create/update users + quotas |
+| `validation.py` | shared username/email/name validators (allow-list, length-bounded) used by the endpoint + CLI |
+| `useradmin.py` | the single `upsert_user` path that mints a user (bcrypt + DB row); shared by both CLIs |
+| `notify.py` | email-notification **groundwork** — fully written, inert until `SMTP_ENABLED` (logs intent otherwise) |
+| `seed_user.py` | admin CLI to create/update a user + quotas directly |
+| `review_requests.py` | admin CLI to list/approve/deny self-service account requests (approve = set password → create user) |
 | `run.py` | uvicorn entrypoint (uvloop, WS deflate off) |
 
 ### Frontend (`frontend/`)
@@ -165,7 +172,8 @@ plus a **boot-log pop-up window**:
 backend/
   requirements.txt  BACKEND-SETUP.md
   src/  app.py config.py db.py states.py auth_core.py resources.py provisioner.py
-        libvirt_xml.py vmmanager.py vnc_bridge.py console.py seed_user.py run.py
+        libvirt_xml.py vmmanager.py vnc_bridge.py console.py validation.py
+        useradmin.py notify.py seed_user.py review_requests.py run.py
 frontend/
   index.html  EDGE-SETUP.md
   app/{index.html,console.html}  assets/{app.js,console.js,style.css}
@@ -189,7 +197,11 @@ Setup runbooks live next to what they bring up: `sys/HOSTSETUP.md` (KVM host),
 
 1. **Host:** follow `sys/HOSTSETUP.md` (stack, WireGuard, `ckbr0` + firewall, pool, controld).
 2. **Golden image:** follow `sys/GOLDEN-IMAGE.md` to build + seal a minimal Ubuntu 24.04 into `golden-v1.qcow2`.
-3. **Users:** `seed_user.py <name> [--admin] [--max-* …]`.
+3. **Users:** create directly with `seed_user.py <name> [--admin] [--max-* …]`, or
+   enable self-service: set `SIGNUP_INVITE_CODES` in `.env`, hand out a code, and
+   approve incoming requests with `review_requests.py list` → `approve <id>`
+   (which prompts for a password and creates the user). Requests are inert until
+   you approve them — see "Self-service account requests" below.
 4. **Edge:** deploy `sys/cloudkeep` + the SPA to EC2; point its WireGuard peer key at the host.
 5. Sign in, build a VM, connect.
 
@@ -236,5 +248,30 @@ and to make the common extensions obvious.
 
 Recently delivered: live serial boot-log console (in-portal pop-up window),
 provisioning **stage** reporting on the cards, dashboard **resource meters**, the
-VM **delete** lifecycle end-to-end, and a UI / accessibility polish pass
-(status dots, focus rings, reduced-motion).
+VM **delete** lifecycle end-to-end, a UI / accessibility polish pass (status
+dots, focus rings, reduced-motion), and **self-service account requests**
+(invite-gated public form → admin-approved on the host).
+
+## Self-service account requests
+
+Users can request an account from the landing page instead of you seeding every
+one by hand — without weakening the security posture, because **a request grants
+nothing**. The flow:
+
+1. The public landing page has an invite-gated **Request access** form (plain
+   HTML, no JS — the page keeps its `script-src 'none'` CSP). It POSTs to
+   `POST /ck/account-requests`.
+2. controld validates it and, if the **invite code** matches (fail-closed: no
+   `SIGNUP_INVITE_CODES` configured ⇒ all requests rejected), enqueues an inert
+   `pending` row. Defenses: honeypot, strict validation, `Origin` check, per-IP
+   (`MAX_PENDING_PER_IP`) and global (`MAX_PENDING_REQUESTS`) caps, plus rate
+   limits at both the edge and controld. The browser is redirected to a pure-CSS
+   confirmation modal.
+3. On the host you run `review_requests.py list`, then `approve <id>` (prompts a
+   password, sets quotas, **creates the user** via the same path as `seed_user`)
+   or `deny <id> --reason …`. Every decision is audited.
+
+The privilege boundary is unchanged from day one: the internet can only *suggest*
+an account; only a host-local admin can *create* one. Email notifications are
+fully scaffolded in `notify.py` but **disabled** — flip `SMTP_ENABLED` + set the
+`SMTP_*` values in `.env` to turn them on later, no code change.

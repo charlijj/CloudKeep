@@ -282,6 +282,38 @@ sudo -u app /opt/cloudkeep/.venv/bin/python /opt/cloudkeep/backend/src/seed_user
     bob --max-vms 3 --max-vcpus 6 --max-mem-mb 12288 --max-disk-gb 150
 ```
 
+## Self-service account requests (optional)
+
+Users can request an account from the landing page; you approve each one on the
+host. A request is **inert** — it only queues a row and grants nothing, so this
+doesn't weaken the posture. It's **fail-closed**: with no invite code configured,
+every request is rejected.
+
+```bash
+# 1. Enable it: set one or more invite codes in .env, then restart controld.
+#    (Empty/unset => signups closed. Comma-separated => multiple codes.)
+echo 'SIGNUP_INVITE_CODES=clinic-2026' | sudo -u app tee -a \
+    /opt/cloudkeep/backend/src/.env
+sudo systemctl restart cloudkeep-controld
+# Hand the code to the people you want to let in. (Optional tuning, all have
+# sane defaults: ACCOUNT_REQUESTS_ENABLED, SIGNUP_RATE_LIMIT,
+# MAX_PENDING_REQUESTS=10, MAX_PENDING_PER_IP=1.)
+
+# 2. Review incoming requests and approve/deny them:
+CK=/opt/cloudkeep/.venv/bin/python
+sudo -u app $CK /opt/cloudkeep/backend/src/review_requests.py list
+sudo -u app $CK /opt/cloudkeep/backend/src/review_requests.py show 1
+sudo -u app $CK /opt/cloudkeep/backend/src/review_requests.py approve 1 --max-vms 3
+sudo -u app $CK /opt/cloudkeep/backend/src/review_requests.py deny 2 --reason "unrecognised"
+```
+
+`approve` prompts for the user's initial password and creates the account exactly
+like `seed_user.py` (the requester never sets a password). Deliver that password
+to the user out-of-band — email notifications are scaffolded in `notify.py` but
+disabled (`SMTP_ENABLED=false`); flip that flag and set the `SMTP_*` values in
+`.env` to turn them on later, no code change. The edge must also proxy
+`POST /ck/account-requests` (in `sys/cloudkeep` and `frontend/EDGE-SETUP.md`).
+
 ## Updating controld
 
 ```bash

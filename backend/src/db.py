@@ -33,7 +33,23 @@ CREATE TABLE IF NOT EXISTS users (
     max_vcpus   INTEGER NOT NULL,
     max_mem_mb  INTEGER NOT NULL,
     max_disk_gb INTEGER NOT NULL,
+    email       TEXT,                          -- for admin reference + future notifications
+    first_name  TEXT,
+    last_name   TEXT,
     created_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS account_requests (
+    id          INTEGER PRIMARY KEY,
+    username    TEXT NOT NULL,                 -- requested (not yet a user)
+    email       TEXT NOT NULL,
+    first_name  TEXT NOT NULL,
+    last_name   TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending', -- pending | approved | denied
+    note        TEXT,                          -- admin reason / approval note
+    src_ip      TEXT,                          -- request origin (abuse forensics)
+    created_at  TEXT NOT NULL,
+    decided_at  TEXT,
+    decided_by  TEXT                           -- host user who actioned it (CLI)
 );
 CREATE TABLE IF NOT EXISTS vms (
     id         INTEGER PRIMARY KEY,
@@ -88,6 +104,12 @@ class Database:
                 self._conn.execute("PRAGMA table_info(vms)").fetchall()}
         if "progress" not in cols:
             self._conn.execute("ALTER TABLE vms ADD COLUMN progress TEXT")
+        # users gained email/name columns (for admin reference + future email).
+        ucols = {r["name"] for r in
+                 self._conn.execute("PRAGMA table_info(users)").fetchall()}
+        for col in ("email", "first_name", "last_name"):
+            if col not in ucols:
+                self._conn.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
 
     # -- low-level helpers -------------------------------------------------
     def _q(self, sql: str, args: tuple = ()) -> list[sqlite3.Row]:
@@ -111,12 +133,17 @@ class Database:
 
     def create_user(self, username: str, pw_hash: str, role: str,
                     max_vms: int, max_vcpus: int, max_mem_mb: int,
-                    max_disk_gb: int) -> int:
+                    max_disk_gb: int, email: str | None = None,
+                    first_name: str | None = None,
+                    last_name: str | None = None) -> int:
+        # email/first/last are optional so seed_user.py (no contact details)
+        # keeps working unchanged; the approval flow passes them from the request.
         return self._exec(
             "INSERT INTO users(username,pw_hash,role,max_vms,max_vcpus,"
-            "max_mem_mb,max_disk_gb,created_at) VALUES(?,?,?,?,?,?,?,?)",
+            "max_mem_mb,max_disk_gb,email,first_name,last_name,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (username, pw_hash, role, max_vms, max_vcpus, max_mem_mb,
-             max_disk_gb, _now()),
+             max_disk_gb, email, first_name, last_name, _now()),
         )
 
     def update_user(self, username: str, pw_hash: str, role: str,
@@ -194,6 +221,61 @@ class Database:
         )
         return {"vcpus": row["vcpus"], "mem_mb": row["mem_mb"],
                 "disk_gb": row["disk_gb"], "vms": row["vms"]}
+
+    # -- account requests (self-service signup queue) ----------------------
+    def create_account_request(self, username: str, email: str,
+                               first_name: str, last_name: str,
+                               src_ip: str | None) -> int:
+        return self._exec(
+            "INSERT INTO account_requests(username,email,first_name,last_name,"
+            "status,src_ip,created_at) VALUES(?,?,?,?,'pending',?,?)",
+            (username, email, first_name, last_name, src_ip, _now()),
+        )
+
+    def list_account_requests(self, status: str | None = "pending") -> list[dict]:
+        if status is None:
+            rows = self._q("SELECT * FROM account_requests ORDER BY id")
+        else:
+            rows = self._q("SELECT * FROM account_requests WHERE status=? "
+                           "ORDER BY id", (status,))
+        return [dict(r) for r in rows]
+
+    def get_account_request(self, req_id: int) -> Optional[dict]:
+        row = self._one("SELECT * FROM account_requests WHERE id=?", (req_id,))
+        return dict(row) if row else None
+
+    def count_pending_requests(self) -> int:
+        row = self._one("SELECT COUNT(*) n FROM account_requests "
+                        "WHERE status='pending'")
+        return row["n"] if row else 0
+
+    def count_pending_requests_by_ip(self, src_ip: str) -> int:
+        row = self._one("SELECT COUNT(*) n FROM account_requests "
+                        "WHERE status='pending' AND src_ip=?", (src_ip,))
+        return row["n"] if row else 0
+
+    def set_request_status(self, req_id: int, status: str,
+                           note: str | None = None,
+                           decided_by: str | None = None) -> None:
+        self._exec(
+            "UPDATE account_requests SET status=?, note=?, decided_at=?, "
+            "decided_by=? WHERE id=?",
+            (status, note, _now(), decided_by, req_id),
+        )
+
+    def purge_account_requests(self, before_iso: str,
+                               only_decided: bool = True) -> int:
+        """Delete old requests created before `before_iso`. By default only
+        decided (approved/denied) ones; pass only_decided=False to also drop
+        stale pending. Returns the number removed."""
+        clause = "created_at < ?"
+        if only_decided:
+            clause += " AND status IN ('approved','denied')"
+        with self._lock:
+            cur = self._conn.execute(
+                f"DELETE FROM account_requests WHERE {clause}", (before_iso,))
+            self._conn.commit()
+            return cur.rowcount
 
     # -- audit -------------------------------------------------------------
     def audit(self, user_id: Optional[int], action: str, detail: str = "") -> None:

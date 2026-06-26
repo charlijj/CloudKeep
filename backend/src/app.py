@@ -21,13 +21,14 @@ Endpoints
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
@@ -39,6 +40,7 @@ from console import serve_console
 from db import Database
 from provisioner import build_provisioner
 from resources import ResourceTracker, QuotaError
+from validation import clean_username, clean_email, clean_name
 from vmmanager import VMManager, NotFound, Forbidden, Conflict
 from vnc_bridge import VNCBridge
 
@@ -191,6 +193,83 @@ async def login(request: Request, body: LoginRequest,
         "token_type": "bearer",
         "expires_in": settings.JWT_EXPIRY_MINUTES * 60,
     })
+
+
+# ---- self-service account requests -----------------------------------------
+def _signup_redirect(anchor: str) -> RedirectResponse:
+    # 303 so the browser re-GETs the landing page; the #account-<anchor>
+    # fragment drives a pure-CSS :target modal (the landing page runs no JS).
+    return RedirectResponse(f"/#account-{anchor}", status_code=303)
+
+
+def _invite_ok(code: str, valid: set[str]) -> bool:
+    # Constant-time across every configured code; an empty set is always False
+    # (fail-closed — no codes configured means signups are closed).
+    ok = False
+    for c in valid:
+        if hmac.compare_digest(code, c):
+            ok = True
+    return ok
+
+
+@app.post("/account-requests")
+@limiter.limit(settings.SIGNUP_RATE_LIMIT)
+async def request_account(request: Request,
+                          username: str = Form(""),
+                          email: str = Form(""),
+                          first_name: str = Form(""),
+                          last_name: str = Form(""),
+                          invite_code: str = Form(""),
+                          website: str = Form(""),       # honeypot — must stay empty
+                          cp: ControlPlane = Depends(get_cp)) -> RedirectResponse:
+    """Public, UNAUTHENTICATED signup intake. A request is INERT: it only
+    enqueues a pending row for an admin to approve via review_requests.py — it
+    creates no user and grants nothing. Defense in depth: master switch,
+    invite-code gate (fail-closed), origin check, honeypot, strict validation,
+    and per-IP + global queue caps (the edge adds TLS + its own rate limit)."""
+    ip = _client_ip(request)
+
+    if not settings.ACCOUNT_REQUESTS_ENABLED:
+        return _signup_redirect("closed")
+
+    # Cross-site form posts (Origin present and not ours) are dropped; our own
+    # form sends our Origin, and non-browser clients omit it.
+    origin = request.headers.get("origin")
+    if origin and origin != settings.ALLOWED_ORIGIN:
+        logger.warning("account request bad origin ip=%s origin=%s", ip, origin)
+        return _signup_redirect("error")
+
+    # Honeypot: a real user never sees this field; a bot fills it. Feign success
+    # (so the bot learns nothing) but store nothing.
+    if website.strip():
+        logger.info("account request honeypot tripped ip=%s", ip)
+        return _signup_redirect("requested")
+
+    # Invite-code gate (fail-closed when no codes are configured).
+    if not _invite_ok(invite_code, settings.invite_codes):
+        logger.info("account request invalid invite code ip=%s", ip)
+        return _signup_redirect("error")
+
+    # Strict validation; one generic error anchor => no field-level oracle.
+    try:
+        username = clean_username(username)
+        email = clean_email(email)
+        first_name = clean_name(first_name, "first name")
+        last_name = clean_name(last_name, "last name")
+    except ValueError:
+        return _signup_redirect("error")
+
+    # Abuse caps: bound the queue globally and to one pending request per IP.
+    if cp.db.count_pending_requests() >= settings.MAX_PENDING_REQUESTS:
+        logger.warning("account request queue full ip=%s", ip)
+        return _signup_redirect("error")
+    if cp.db.count_pending_requests_by_ip(ip) >= settings.MAX_PENDING_PER_IP:
+        return _signup_redirect("error")
+
+    cp.db.create_account_request(username, email, first_name, last_name, ip)
+    cp.db.audit(None, "account.request", f"{username} <{email}> ip={ip}")
+    logger.info("account request queued user=%s ip=%s", username, ip)
+    return _signup_redirect("requested")
 
 
 # ---- resources -------------------------------------------------------------
