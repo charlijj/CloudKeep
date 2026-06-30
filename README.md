@@ -186,7 +186,9 @@ sys/
 
 Setup runbooks live next to what they bring up: `sys/HOSTSETUP.md` (KVM host),
 `sys/GOLDEN-IMAGE.md` (the template VM), `backend/BACKEND-SETUP.md` (controld),
-`frontend/EDGE-SETUP.md` (the AWS edge).
+`frontend/EDGE-SETUP.md` (the AWS edge). User onboarding — how accounts are
+created, with step-by-step admin and end-user guides — is in
+`backend/USER-MANAGEMENT.md`.
 
 ## Getting started
 
@@ -275,3 +277,6 @@ The privilege boundary is unchanged from day one: the internet can only *suggest
 an account; only a host-local admin can *create* one. Email notifications are
 fully scaffolded in `notify.py` but **disabled** — flip `SMTP_ENABLED` + set the
 `SMTP_*` values in `.env` to turn them on later, no code change.
+
+> Full step-by-step admin and end-user instructions, the configuration
+> reference, and troubleshooting are in **`backend/USER-MANAGEMENT.md`**.
