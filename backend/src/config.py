@@ -65,6 +65,14 @@ class Settings(BaseSettings):
     SMTP_USE_TLS: bool = True            # STARTTLS on SMTP_PORT
     PORTAL_URL: str = ""                 # email link base; defaults to ALLOWED_ORIGIN
 
+    # Email-ownership verification for account requests. When active, a request
+    # is held as 'unverified' and a tokenised link is emailed; the admin only
+    # ever sees requests whose owner clicked the link. It can only be active when
+    # SMTP is on (you can't verify without sending), so with email off the flow
+    # is exactly as before (requests go straight to 'pending').
+    REQUIRE_EMAIL_VERIFICATION: bool = True
+    VERIFY_TOKEN_TTL_HOURS: int = 24
+
     # --- Persistence ---
     DB_PATH: str = "/var/lib/cloudkeep/db/cloudkeep.db"
 
@@ -120,6 +128,12 @@ class Settings(BaseSettings):
     def portal_url(self) -> str:
         """Base URL for links in notifications; falls back to the edge origin."""
         return (self.PORTAL_URL or self.ALLOWED_ORIGIN).rstrip("/")
+
+    @property
+    def email_verification_active(self) -> bool:
+        """Verify email ownership only when we can actually send mail; with SMTP
+        off this is a no-op and requests go straight to 'pending' (old behaviour)."""
+        return self.SMTP_ENABLED and self.REQUIRE_EMAIL_VERIFICATION
 
 
 settings = Settings()

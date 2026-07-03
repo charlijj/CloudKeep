@@ -18,6 +18,8 @@ from __future__ import annotations
 import argparse
 import datetime
 import getpass
+import os
+import pwd
 import sys
 
 from config import settings
@@ -25,6 +27,16 @@ from db import Database
 from notify import notify_account_approved
 from useradmin import upsert_user
 from validation import clean_username
+
+
+def _operator() -> str:
+    """The host user running the CLI, from the real uid (not the spoofable
+    USER/LOGNAME env that getpass.getuser reads) so the audit trail can't be
+    forged by setting an env var."""
+    try:
+        return pwd.getpwuid(os.getuid()).pw_name
+    except Exception:
+        return getpass.getuser()
 
 
 def _fmt(r: dict) -> str:
@@ -48,9 +60,10 @@ def cmd_show(db: Database, args) -> int:
     if not r:
         print(f"no request #{args.id}", file=sys.stderr)
         return 1
-    for k in ("id", "username", "email", "first_name", "last_name", "status",
-              "src_ip", "created_at", "decided_at", "decided_by", "note"):
-        print(f"  {k:<11}: {r.get(k)}")
+    for k in ("id", "username", "email", "email_verified", "first_name",
+              "last_name", "status", "src_ip", "created_at", "decided_at",
+              "decided_by", "note"):
+        print(f"  {k:<14}: {r.get(k)}")
     return 0
 
 
@@ -89,7 +102,7 @@ def cmd_approve(db: Database, args) -> int:
                 max_mem_mb=args.max_mem_mb, max_disk_gb=args.max_disk_gb,
                 email=r["email"], first_name=r["first_name"],
                 last_name=r["last_name"])
-    by = getpass.getuser()
+    by = _operator()
     db.set_request_status(r["id"], "approved", note=args.note, decided_by=by)
     user = db.get_user(username)
     db.audit(user["id"] if user else None, "account.approve",
@@ -111,7 +124,7 @@ def cmd_deny(db: Database, args) -> int:
     if r["status"] != "pending":
         print(f"request #{args.id} is already {r['status']}", file=sys.stderr)
         return 1
-    by = getpass.getuser()
+    by = _operator()
     db.set_request_status(r["id"], "denied", note=args.reason, decided_by=by)
     db.audit(None, "account.deny",
              f"req#{r['id']} {r['username']} by {by}: {args.reason or ''}")

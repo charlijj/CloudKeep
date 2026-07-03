@@ -55,6 +55,7 @@ edge permanently static.
 ```
 POST /ck/account-requests         → (public, invite-gated) queue an INERT signup request;
                                     an admin approves it on the host (creates no user itself)
+GET  /ck/account-requests/verify  → (public) consume an email-verification token → request reviewable
 POST /ck/auth/login               → JWT (held in browser memory only)
 GET  /ck/dashboard                → your VMs + host free pool + quota/usage (one round-trip)
 GET  /ck/resources                → host free pool + your quota/usage + sizing bounds
@@ -274,9 +275,12 @@ nothing**. The flow:
    or `deny <id> --reason …`. Every decision is audited.
 
 The privilege boundary is unchanged from day one: the internet can only *suggest*
-an account; only a host-local admin can *create* one. Email notifications are
-fully scaffolded in `notify.py` but **disabled** — flip `SMTP_ENABLED` + set the
-`SMTP_*` values in `.env` to turn them on later, no code change.
+an account; only a host-local admin can *create* one. Email is **off by default**;
+enable it (`SMTP_ENABLED` + `SMTP_*` in `.env`) to add **email-ownership
+verification** — the requester must click a single-use, time-limited, hash-stored
+token link before the request is reviewable — plus an "account ready" mail on
+approval. Passwords are never emailed. Per-IP limits key off the edge-set
+`X-Real-IP`, not the spoofable `X-Forwarded-For`.
 
 > Full step-by-step admin and end-user instructions, the configuration
 > reference, and troubleshooting are in **`backend/USER-MANAGEMENT.md`**.

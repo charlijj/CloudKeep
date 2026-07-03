@@ -206,8 +206,19 @@ server {
     }
 
     location ~* \.(html|css|svg|png|jpg|jpeg|gif|webp|ico|woff2?)$ {
-        expires 1h;
+        # nginx add_header is all-or-nothing: setting Cache-Control here would
+        # drop every inherited security header, so a page fetched as /index.html
+        # (vs /) would lose its CSP + X-Frame-Options and become frameable
+        # (clickjacking the request form). Re-list the site baseline.
+        add_header X-Frame-Options              "DENY"             always;
+        add_header X-Content-Type-Options       "nosniff"          always;
+        add_header Referrer-Policy              "no-referrer"      always;
+        add_header Permissions-Policy           "geolocation=(), microphone=(), camera=(), payment=(), usb=(), interest-cohort=()" always;
+        add_header Cross-Origin-Opener-Policy   "same-origin"      always;
+        add_header Cross-Origin-Resource-Policy "same-origin"      always;
+        add_header Content-Security-Policy      "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'none'; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
         add_header Cache-Control "public, no-transform" always;
+        expires 1h;
         try_files $uri =404;
     }
 

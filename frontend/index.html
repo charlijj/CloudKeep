@@ -69,10 +69,12 @@
             <p>Enter your details and your invite code. An administrator reviews
                every request — no account is created until it's approved.</p>
             <form class="req-form" method="post" action="/ck/account-requests" autocomplete="off">
-                <!-- Honeypot: hidden from people; bots fill it and are dropped. -->
+                <!-- Honeypot: hidden from people; bots fill it and are dropped.
+                     Named hp_check (not a real field name) so browser autofill
+                     leaves it alone and can't false-positive a real user. -->
                 <div class="hp" aria-hidden="true">
                     <label>Leave this field empty
-                        <input type="text" name="website" tabindex="-1" autocomplete="off"></label>
+                        <input type="text" name="hp_check" tabindex="-1" autocomplete="off"></label>
                 </div>
                 <label class="field"><span class="field-label">username</span>
                     <input class="field-input" name="username" required minlength="3" maxlength="32"
@@ -100,6 +102,38 @@
             <p>Thanks — your request is pending review. An administrator will set
                up your account and share your sign-in details with you directly.</p>
             <a class="btn btn--card" href="#">Done</a>
+        </div>
+    </div>
+    <div id="account-verify-sent" class="modal" role="dialog" aria-modal="true" aria-labelledby="req-vs-title">
+        <a href="#" class="modal-backdrop" aria-label="Close"></a>
+        <div class="modal-box">
+            <a href="#" class="modal-close" aria-label="Close">&times;</a>
+            <h2 id="req-vs-title" class="modal-title">Check your email</h2>
+            <p>We've sent a link to the address you entered. Open it to confirm
+               your email — then your request goes to an administrator for review.
+               The link expires in a day.</p>
+            <a class="btn btn--card" href="#">Done</a>
+        </div>
+    </div>
+    <div id="account-verified" class="modal" role="dialog" aria-modal="true" aria-labelledby="req-v-title">
+        <a href="#" class="modal-backdrop" aria-label="Close"></a>
+        <div class="modal-box">
+            <a href="#" class="modal-close" aria-label="Close">&times;</a>
+            <h2 id="req-v-title" class="modal-title">Email confirmed</h2>
+            <p>Thanks — your email is verified and your request is now pending
+               review. An administrator will set up your account and share your
+               sign-in details with you directly.</p>
+            <a class="btn btn--card" href="#">Done</a>
+        </div>
+    </div>
+    <div id="account-verify-error" class="modal" role="dialog" aria-modal="true" aria-labelledby="req-ve-title">
+        <a href="#" class="modal-backdrop" aria-label="Close"></a>
+        <div class="modal-box">
+            <a href="#" class="modal-close" aria-label="Close">&times;</a>
+            <h2 id="req-ve-title" class="modal-title">Link invalid or expired</h2>
+            <p>This verification link is invalid, has expired, or was already
+               used. Please request access again to get a fresh link.</p>
+            <a class="btn btn--card" href="#request">Request access</a>
         </div>
     </div>
     <div id="account-error" class="modal" role="dialog" aria-modal="true" aria-labelledby="req-err-title">

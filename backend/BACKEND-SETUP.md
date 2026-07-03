@@ -309,10 +309,16 @@ sudo -u app $CK /opt/cloudkeep/backend/src/review_requests.py deny 2 --reason "u
 
 `approve` prompts for the user's initial password and creates the account exactly
 like `seed_user.py` (the requester never sets a password). Deliver that password
-to the user out-of-band — email notifications are scaffolded in `notify.py` but
-disabled (`SMTP_ENABLED=false`); flip that flag and set the `SMTP_*` values in
-`.env` to turn them on later, no code change. The edge must also proxy
-`POST /ck/account-requests` (in `sys/cloudkeep` and `frontend/EDGE-SETUP.md`).
+to the user out-of-band — it is never emailed. The edge must proxy the account
+endpoints (`POST /ck/account-requests` and `GET /ck/account-requests/verify`,
+both in `sys/cloudkeep` and `frontend/EDGE-SETUP.md`).
+
+**Optional — email + email verification.** Off by default. Set `SMTP_ENABLED=true`
+plus the `SMTP_*` values in `.env` (see `USER-MANAGEMENT.md` §5) and restart
+controld. With it on, a requester must confirm their address via a tokenised
+email link before their request is reviewable (`REQUIRE_EMAIL_VERIFICATION`,
+default on), and approved users get a "your account is ready" email. With SMTP
+off, behaviour is unchanged (requests go straight to `pending`, no email).
 
 ## Updating controld
 
