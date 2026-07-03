@@ -245,10 +245,13 @@ async def request_account(request: Request,
     if not settings.ACCOUNT_REQUESTS_ENABLED:
         return _signup_redirect("closed")
 
-    # Cross-site form posts (Origin present and not ours) are dropped; our own
-    # form sends our Origin, and non-browser clients omit it.
+    # Drop a PRESENT, real, cross-site Origin. Browsers legitimately send
+    # `Origin: null` on form-POST navigations under a strict Referrer-Policy
+    # (e.g. no-referrer) or from sandboxed contexts, and non-browser clients omit
+    # it entirely — so treat null/absent as "can't tell" and rely on the invite
+    # gate + honeypot + caps rather than hard-failing our own users.
     origin = request.headers.get("origin")
-    if origin and origin != settings.ALLOWED_ORIGIN:
+    if origin and origin not in ("null", settings.ALLOWED_ORIGIN):
         logger.warning("account request bad origin ip=%s origin=%s", ip, origin)
         return _signup_redirect("error")
 

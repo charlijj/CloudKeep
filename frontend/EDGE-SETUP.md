@@ -227,7 +227,7 @@ server {
     # Security headers (site-wide baseline)
     add_header X-Frame-Options              "DENY"        always;
     add_header X-Content-Type-Options       "nosniff"     always;
-    add_header Referrer-Policy              "no-referrer" always;
+    add_header Referrer-Policy              "same-origin" always;
     add_header Permissions-Policy           "geolocation=(), microphone=(), camera=(), payment=(), usb=()" always;
     add_header Cross-Origin-Opener-Policy   "same-origin" always;
     add_header Cross-Origin-Resource-Policy "same-origin" always;
@@ -309,7 +309,7 @@ server {
     location ^~ /app/ {
         add_header X-Frame-Options              "DENY"        always;
         add_header X-Content-Type-Options       "nosniff"     always;
-        add_header Referrer-Policy              "no-referrer" always;
+        add_header Referrer-Policy              "same-origin" always;
         add_header Permissions-Policy           "geolocation=(), microphone=(), camera=(), payment=(), usb=()" always;
         add_header Cross-Origin-Opener-Policy   "same-origin" always;
         add_header Cross-Origin-Resource-Policy "same-origin" always;
@@ -333,7 +333,7 @@ server {
         # ones, and without them /index.html is frameable (clickjacking).
         add_header X-Frame-Options              "DENY"        always;
         add_header X-Content-Type-Options       "nosniff"     always;
-        add_header Referrer-Policy              "no-referrer" always;
+        add_header Referrer-Policy              "same-origin" always;
         add_header Permissions-Policy           "geolocation=(), microphone=(), camera=(), payment=(), usb=()" always;
         add_header Cross-Origin-Opener-Policy   "same-origin" always;
         add_header Cross-Origin-Resource-Policy "same-origin" always;
