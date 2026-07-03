@@ -329,8 +329,18 @@ server {
         try_files $uri =404;
     }
     location ~* \.(html|css|svg|png|jpg|jpeg|gif|webp|ico|woff2?)$ {
-        expires 1h;
+        # Re-list the security baseline: an add_header here drops all inherited
+        # ones, and without them /index.html is frameable (clickjacking).
+        add_header X-Frame-Options              "DENY"        always;
+        add_header X-Content-Type-Options       "nosniff"     always;
+        add_header Referrer-Policy              "no-referrer" always;
+        add_header Permissions-Policy           "geolocation=(), microphone=(), camera=(), payment=(), usb=()" always;
+        add_header Cross-Origin-Opener-Policy   "same-origin" always;
+        add_header Cross-Origin-Resource-Policy "same-origin" always;
+        add_header Strict-Transport-Security    "max-age=31536000" always;
+        add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'none'; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
         add_header Cache-Control "public, no-transform" always;
+        expires 1h;
         try_files $uri =404;
     }
     location / { try_files $uri $uri/ =404; }

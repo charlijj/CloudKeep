@@ -63,8 +63,12 @@ Two tables in the controld SQLite DB (`/var/lib/cloudkeep/db/cloudkeep.db`):
   forensics), timestamps, and `decided_by` (which host user actioned it).
 
 Every meaningful action lands in the **`audit`** table: `account.request`,
-`account.approve`, `account.deny` (and the `vm.*` actions for machine
-lifecycle).
+`account.verify`, `account.approve`, `account.deny` (and the `vm.*` actions for
+machine lifecycle).
+
+The `account_requests` row also carries email-verification state
+(`email_verified`, a hashed `verify_token_hash`, and `verify_expires_at`) and an
+extra status, **`unverified`**, used while awaiting the emailed link — see §5.
 
 ### 1.4 The end-to-end flow
 
@@ -83,6 +87,11 @@ lifecycle).
                           then: sign in at /app/
 ```
 
+When email verification is enabled (§5), one hop is inserted before the admin
+sees anything: the request is stored as **`unverified`**, a tokenised link is
+emailed, and only when the owner clicks it (`GET /ck/account-requests/verify`)
+does the row become `pending` and show up in `review_requests.py list`.
+
 ### 1.5 Security controls on the public surface (defense in depth)
 
 The request endpoint is the only unauthenticated *write* surface besides login,
@@ -95,7 +104,8 @@ so it is gated at every layer:
 | Anti-bot | Hidden **honeypot** field — bots fill it and are silently dropped (no JS, no captcha). |
 | Anti-CSRF | `Origin` header is checked against the allowed origin; cross-site form posts are dropped. |
 | Validation | Strict allow-list: `username` `[a-z0-9_-]{3,32}`, email shape + ≤254 chars, names length/charset-bounded. Generic error response → no field-level oracle, no user enumeration. |
-| Caps | `MAX_PENDING_PER_IP` (default **1**) and `MAX_PENDING_REQUESTS` (default **10**) bound the queue; controld also rate-limits per IP (`SIGNUP_RATE_LIMIT`). |
+| Caps | `MAX_PENDING_PER_IP` (default **1**) and `MAX_PENDING_REQUESTS` (default **10**) bound the OPEN queue (unverified + pending); controld also rate-limits per IP (`SIGNUP_RATE_LIMIT`). Per-IP keying uses the edge-set `X-Real-IP` (the true peer), not the spoofable `X-Forwarded-For`. |
+| Email verification | When enabled (§5), the requester must click a single-use, time-limited, hash-stored token link before the request is reviewable — proving they control the address and blocking requests made with someone else's email. |
 | Privilege | The row is inert. Only the host-side CLI mints a user. Every decision is audited. |
 
 ---
@@ -241,23 +251,29 @@ Relevant actions: `account.request` (a public submission, with username/email/IP
    - **email** — where your administrator can reach you.
    - **invite code** — the code your administrator gave you. Without a valid
      code the request is rejected.
-4. Submit. You'll see a **"Request received"** confirmation.
+4. Submit.
+   - If email verification is enabled, you'll see **"Check your email"** — open
+     the link we send to confirm your address (it expires in 24h by default).
+     Only after you click it does your request go to an administrator.
+   - Otherwise you'll see **"Request received"** and it goes straight to review.
 
 > You do **not** choose a password here. Your administrator sets your initial
 > password when they approve the request and shares it with you directly.
 
 If you see **"Couldn't submit that"**, re-check your details and the invite code.
 Common causes: a mistyped or expired invite code, an invalid username/email, or
-you already have a request pending review (only one pending request per network
-is allowed at a time). If you see **"Requests are closed"**, the operator hasn't
-enabled signups — contact them directly.
+you already have an open request (only one per network at a time). If you see
+**"Requests are closed"**, the operator hasn't enabled signups — contact them
+directly. If your verification link says **"Link invalid or expired"**, just
+request access again to get a fresh one.
 
 ### 3.2 What happens next
 
-Your request waits in a queue for a human to review it. An administrator
-approves it (creating your account) or denies it. On approval, they'll contact
-you with your username and initial password. Nothing is automatic — there is no
-email step today, by design.
+If verification is on, clicking the emailed link confirms your address and moves
+your request into the review queue. An administrator then approves it (creating
+your account) or denies it. On approval you receive a short "your account is
+ready" email (if email is enabled); your **password is always delivered
+out-of-band** by the administrator — it is never emailed.
 
 ### 3.3 Signing in
 
@@ -281,21 +297,23 @@ All optional except where noted; sane defaults shown.
 | `ACCOUNT_REQUESTS_ENABLED` | `true` | Master on/off for the public endpoint. |
 | `SIGNUP_INVITE_CODES` | *(empty)* | Comma-separated invite codes. **Empty ⇒ all requests rejected** (signups closed). |
 | `SIGNUP_RATE_LIMIT` | `5/hour` | Per-IP request rate at controld (the edge throttles too). |
-| `MAX_PENDING_REQUESTS` | `10` | Global cap on the pending queue. |
-| `MAX_PENDING_PER_IP` | `1` | Pending requests a single IP may hold at once. |
+| `MAX_PENDING_REQUESTS` | `10` | Global cap on the OPEN queue (unverified + pending). |
+| `MAX_PENDING_PER_IP` | `1` | Open requests a single IP may hold at once. |
 | `DEFAULT_MAX_VMS` / `_VCPUS` / `_MEM_MB` / `_DISK_GB` | 2 / 4 / 8192 / 100 | Quota defaults for new users when no flag is given. |
-| `SMTP_ENABLED` | `false` | Master switch for email notifications (see §5). |
+| `SMTP_ENABLED` | `false` | Master switch for email (verification + notifications) — see §5. |
+| `SMTP_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` / `_FROM` / `_USE_TLS` | — / 587 / — / — / — / true | SMTP relay settings, used only when `SMTP_ENABLED`. |
+| `REQUIRE_EMAIL_VERIFICATION` | `true` | Require email-ownership verification (only engages when `SMTP_ENABLED`). |
+| `VERIFY_TOKEN_TTL_HOURS` | `24` | How long a verification link stays valid. |
+| `PORTAL_URL` | *(ALLOWED_ORIGIN)* | Base URL used in email links. |
 
 ---
 
-## 5. Email notifications (groundwork — currently off)
+## 5. Email + email verification
 
-Approval emails are **fully scaffolded but disabled**. With `SMTP_ENABLED=false`
-(the default), `notify.py` opens no connection and just logs what it *would*
-send; the approval flow already calls it, so the wiring is in place. Failures
-can never break an approval — email is best-effort.
-
-To turn it on later (no code change), set these in `.env` and restart controld:
+Email is **off by default**. With `SMTP_ENABLED=false`, `notify.py` opens no
+connection and just logs what it would send, and requests behave as before
+(straight to `pending`, no verification). Turn it on by setting the SMTP values
+in `.env` and restarting controld:
 
 ```bash
 SMTP_ENABLED=true
@@ -305,11 +323,36 @@ SMTP_USERNAME=apikey-or-user
 SMTP_PASSWORD=secret
 SMTP_FROM=CloudKeep <no-reply@example.com>
 SMTP_USE_TLS=true
-PORTAL_URL=https://cloudkeep-auth.duckdns.org   # used for the sign-in link (defaults to ALLOWED_ORIGIN)
+PORTAL_URL=https://cloudkeep-auth.duckdns.org   # link base (defaults to ALLOWED_ORIGIN)
+# REQUIRE_EMAIL_VERIFICATION=true   # default; set false to email but skip verification
+# VERIFY_TOKEN_TTL_HOURS=24         # link lifetime
 ```
 
-The approved user then receives a short "your account is ready" email with the
-portal link (the password is still delivered out-of-band — it is never emailed).
+Once enabled, two emails exist:
+
+- **Verification** (on request, if `REQUIRE_EMAIL_VERIFICATION`): the requester
+  must click a tokenised link to prove they control the address *before* the
+  request becomes reviewable. The request is held as **`unverified`** and does
+  not appear in `review_requests.py list` until confirmed. This is what stops
+  someone requesting accounts with other people's addresses.
+- **Approved** (on approval): a short "your account is ready" email with the
+  portal link. The **password is never emailed** — always delivered out-of-band.
+
+How verification is kept secure:
+
+- The link carries a 256-bit `secrets.token_urlsafe(32)` token; only its
+  **SHA-256 hash** is stored, so a DB leak exposes no live token.
+- Tokens are **single-use** (burned on confirm) and **time-limited**
+  (`VERIFY_TOKEN_TTL_HOURS`).
+- The verification email is sent only **after** the invite-code gate, validation
+  and the per-IP/global caps pass, and unverified rows count against those caps —
+  so the endpoint can't be turned into an email relay or bomb.
+- Email failures are best-effort for approval (never block it); for verification
+  the row is only stored if the mail actually sent, so a misconfigured relay
+  can't leave dangling unverifiable requests.
+
+> With `SMTP_ENABLED=true` but `REQUIRE_EMAIL_VERIFICATION=false`, requests skip
+> verification (straight to `pending`) but the approved-account email still sends.
 
 ---
 
@@ -322,8 +365,11 @@ portal link (the password is still delivered out-of-band — it is never emailed
 | Landing page has no **Request access** button | Frontend not redeployed. `rsync` the current `frontend/` to the web root. |
 | Submitting reloads the SPA / 404s | Edge isn't proxying `POST /ck/account-requests`. Add the `location` block (`EDGE-SETUP.md` §7 / `sys/cloudkeep`), `nginx -t && reload`. |
 | controld errors on form posts about "multipart" | The `python-multipart` dependency is missing — re-run the `requirements.txt` pip step (`BACKEND-SETUP.md` §1). |
-| `review_requests.py list` shows nothing | No pending requests (try `--all`), or you're pointed at a different `DB_PATH` than controld. |
+| `review_requests.py list` shows nothing | No *pending* requests. Verified ones show here; **`unverified`** ones (awaiting the email link) are hidden until confirmed — use `list --all` to see them. Or you're pointed at a different `DB_PATH` than controld. |
 | Approve says "a user named … already exists" | The username is taken. Deny the request and ask the requester to choose another, or rename. |
+| User never gets the verification email | SMTP is misconfigured — with verification on, controld only stores the request if the mail sent, so a failure shows as "Couldn't submit that". Check `journalctl -u cloudkeep-controld` for `verify-email send failed` and verify the `SMTP_*` settings; test the relay. |
+| Verification link says "invalid or expired" | The link was already used, timed out (`VERIFY_TOKEN_TTL_HOURS`), or an email scanner pre-fetched it. Have the user submit the form again for a fresh link. |
+| Requests stay `unverified` forever | Users aren't clicking the link (check spam), or email isn't arriving. They age out of the caps only when purged; `review_requests.py purge --include-pending --days N` clears stale ones. |
 
 ---
 

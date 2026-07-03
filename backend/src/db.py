@@ -39,17 +39,20 @@ CREATE TABLE IF NOT EXISTS users (
     created_at  TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS account_requests (
-    id          INTEGER PRIMARY KEY,
-    username    TEXT NOT NULL,                 -- requested (not yet a user)
-    email       TEXT NOT NULL,
-    first_name  TEXT NOT NULL,
-    last_name   TEXT NOT NULL,
-    status      TEXT NOT NULL DEFAULT 'pending', -- pending | approved | denied
-    note        TEXT,                          -- admin reason / approval note
-    src_ip      TEXT,                          -- request origin (abuse forensics)
-    created_at  TEXT NOT NULL,
-    decided_at  TEXT,
-    decided_by  TEXT                           -- host user who actioned it (CLI)
+    id                INTEGER PRIMARY KEY,
+    username          TEXT NOT NULL,           -- requested (not yet a user)
+    email             TEXT NOT NULL,
+    first_name        TEXT NOT NULL,
+    last_name         TEXT NOT NULL,
+    status            TEXT NOT NULL DEFAULT 'pending', -- unverified | pending | approved | denied
+    note              TEXT,                    -- admin reason / approval note
+    src_ip            TEXT,                    -- request origin (abuse forensics)
+    email_verified    INTEGER NOT NULL DEFAULT 0,
+    verify_token_hash TEXT,                    -- sha256(token); NULL once used/verified
+    verify_expires_at TEXT,                    -- ISO; NULL once used/verified
+    created_at        TEXT NOT NULL,
+    decided_at        TEXT,
+    decided_by        TEXT                     -- host user who actioned it (CLI)
 );
 CREATE TABLE IF NOT EXISTS vms (
     id         INTEGER PRIMARY KEY,
@@ -110,6 +113,15 @@ class Database:
         for col in ("email", "first_name", "last_name"):
             if col not in ucols:
                 self._conn.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
+        # account_requests gained email-verification columns.
+        rcols = {r["name"] for r in
+                 self._conn.execute("PRAGMA table_info(account_requests)").fetchall()}
+        if "email_verified" not in rcols:
+            self._conn.execute("ALTER TABLE account_requests "
+                               "ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
+        for col in ("verify_token_hash", "verify_expires_at"):
+            if col not in rcols:
+                self._conn.execute(f"ALTER TABLE account_requests ADD COLUMN {col} TEXT")
 
     # -- low-level helpers -------------------------------------------------
     def _q(self, sql: str, args: tuple = ()) -> list[sqlite3.Row]:
@@ -225,11 +237,15 @@ class Database:
     # -- account requests (self-service signup queue) ----------------------
     def create_account_request(self, username: str, email: str,
                                first_name: str, last_name: str,
-                               src_ip: str | None) -> int:
+                               src_ip: str | None, status: str = "pending",
+                               verify_token_hash: str | None = None,
+                               verify_expires_at: str | None = None) -> int:
         return self._exec(
             "INSERT INTO account_requests(username,email,first_name,last_name,"
-            "status,src_ip,created_at) VALUES(?,?,?,?,'pending',?,?)",
-            (username, email, first_name, last_name, src_ip, _now()),
+            "status,src_ip,verify_token_hash,verify_expires_at,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (username, email, first_name, last_name, status, src_ip,
+             verify_token_hash, verify_expires_at, _now()),
         )
 
     def list_account_requests(self, status: str | None = "pending") -> list[dict]:
@@ -244,15 +260,35 @@ class Database:
         row = self._one("SELECT * FROM account_requests WHERE id=?", (req_id,))
         return dict(row) if row else None
 
-    def count_pending_requests(self) -> int:
+    # "Open" = still occupying a queue slot: awaiting email verification OR
+    # awaiting admin review. The caps count these so unverified rows (each of
+    # which triggered an email) can't be used to flood or email-bomb.
+    def count_open_requests(self) -> int:
         row = self._one("SELECT COUNT(*) n FROM account_requests "
-                        "WHERE status='pending'")
+                        "WHERE status IN ('unverified','pending')")
         return row["n"] if row else 0
 
-    def count_pending_requests_by_ip(self, src_ip: str) -> int:
+    def count_open_requests_by_ip(self, src_ip: str) -> int:
         row = self._one("SELECT COUNT(*) n FROM account_requests "
-                        "WHERE status='pending' AND src_ip=?", (src_ip,))
+                        "WHERE status IN ('unverified','pending') AND src_ip=?",
+                        (src_ip,))
         return row["n"] if row else 0
+
+    def get_unverified_request_by_token(self, token_hash: str) -> Optional[dict]:
+        """Look up an as-yet-unverified request by its token hash. Only matches
+        status='unverified' so a token can't re-trigger once used/decided."""
+        row = self._one("SELECT * FROM account_requests "
+                        "WHERE verify_token_hash=? AND status='unverified'",
+                        (token_hash,))
+        return dict(row) if row else None
+
+    def mark_request_verified(self, req_id: int) -> None:
+        """Email confirmed: promote unverified -> pending and burn the token."""
+        self._exec(
+            "UPDATE account_requests SET status='pending', email_verified=1, "
+            "verify_token_hash=NULL, verify_expires_at=NULL WHERE id=?",
+            (req_id,),
+        )
 
     def set_request_status(self, req_id: int, status: str,
                            note: str | None = None,

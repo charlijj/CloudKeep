@@ -16,6 +16,27 @@ from email.message import EmailMessage
 logger = logging.getLogger("cloudkeep.notify")
 
 
+def notify_email_verification(settings, *, email: str, first_name: str | None,
+                              verify_url: str) -> bool:
+    """Send the tokenised link that proves the requester controls this address.
+    Returns True iff the email was actually sent. Unlike the approval mail this
+    is on the critical path — the request isn't queued for review until the
+    link is clicked — so the caller checks the return value."""
+    greeting = f"Hi {first_name}," if first_name else "Hi,"
+    ttl = settings.VERIFY_TOKEN_TTL_HOURS
+    body = (
+        f"{greeting}\n\n"
+        "Someone (hopefully you) requested a CloudKeep account with this email "
+        "address. Confirm it by opening the link below within "
+        f"{ttl} hour{'s' if ttl != 1 else ''}:\n\n"
+        f"    {verify_url}\n\n"
+        "Once confirmed, an administrator will review your request. If you did "
+        "not request this, simply ignore this email — no account is created.\n"
+    )
+    return _send(settings, to=email, subject="Confirm your CloudKeep account request",
+                 body=body)
+
+
 def notify_account_approved(settings, *, email: str | None, username: str,
                             first_name: str | None = None) -> bool:
     """Tell an approved user their account is ready. Returns True iff an email

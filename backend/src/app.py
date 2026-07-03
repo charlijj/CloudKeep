@@ -21,8 +21,11 @@ Endpoints
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import hmac
 import logging
+import secrets
 import time
 from contextlib import asynccontextmanager
 
@@ -38,6 +41,7 @@ from auth_core import AuthService, SessionStore
 from config import settings
 from console import serve_console
 from db import Database
+from notify import notify_email_verification
 from provisioner import build_provisioner
 from resources import ResourceTracker, QuotaError
 from validation import clean_username, clean_email, clean_name
@@ -94,10 +98,14 @@ class ControlPlane:
 # App assembly
 # --------------------------------------------------------------------------
 def _client_ip(request: Request) -> str:
-    # Trustworthy because UFW only admits the NGINX/WireGuard peer, which
-    # always sets X-Forwarded-For with the true client address.
-    xff = request.headers.get("x-forwarded-for")
-    return xff.split(",")[0].strip() if xff else get_remote_address(request)
+    # Read X-Real-IP, which the edge sets to $remote_addr and OVERWRITES on every
+    # proxied request — so it is the true peer and a client cannot forge it.
+    # We deliberately do NOT trust X-Forwarded-For: the edge builds it with
+    # $proxy_add_x_forwarded_for, which APPENDS the peer to whatever the client
+    # sent, leaving the client-controlled value as the first element. Trusting
+    # that would let a caller spoof their IP to evade the per-IP rate limits
+    # (login brute-force, signup) and the per-IP pending cap.
+    return request.headers.get("x-real-ip") or get_remote_address(request)
 
 
 limiter = Limiter(key_func=_client_ip)
@@ -204,10 +212,13 @@ def _signup_redirect(anchor: str) -> RedirectResponse:
 
 def _invite_ok(code: str, valid: set[str]) -> bool:
     # Constant-time across every configured code; an empty set is always False
-    # (fail-closed — no codes configured means signups are closed).
+    # (fail-closed — no codes configured means signups are closed). Compare on
+    # bytes: hmac.compare_digest raises TypeError on non-ASCII str, which on a
+    # raw POST would surface as an unhandled 500 instead of a clean rejection.
     ok = False
+    code_b = code.encode("utf-8", "ignore")
     for c in valid:
-        if hmac.compare_digest(code, c):
+        if hmac.compare_digest(code_b, c.encode("utf-8", "ignore")):
             ok = True
     return ok
 
@@ -220,13 +231,15 @@ async def request_account(request: Request,
                           first_name: str = Form(""),
                           last_name: str = Form(""),
                           invite_code: str = Form(""),
-                          website: str = Form(""),       # honeypot — must stay empty
+                          hp_check: str = Form(""),      # honeypot — must stay empty
                           cp: ControlPlane = Depends(get_cp)) -> RedirectResponse:
     """Public, UNAUTHENTICATED signup intake. A request is INERT: it only
-    enqueues a pending row for an admin to approve via review_requests.py — it
-    creates no user and grants nothing. Defense in depth: master switch,
-    invite-code gate (fail-closed), origin check, honeypot, strict validation,
-    and per-IP + global queue caps (the edge adds TLS + its own rate limit)."""
+    enqueues a row for an admin to approve via review_requests.py — it creates
+    no user and grants nothing. Defense in depth: master switch, invite-code
+    gate (fail-closed), origin check, honeypot, strict validation, per-IP +
+    global queue caps (the edge adds TLS + its own rate limit). When email
+    verification is active the row is held 'unverified' until the owner clicks
+    a tokenised link, so admins only ever see requests with a proven address."""
     ip = _client_ip(request)
 
     if not settings.ACCOUNT_REQUESTS_ENABLED:
@@ -241,7 +254,7 @@ async def request_account(request: Request,
 
     # Honeypot: a real user never sees this field; a bot fills it. Feign success
     # (so the bot learns nothing) but store nothing.
-    if website.strip():
+    if hp_check.strip():
         logger.info("account request honeypot tripped ip=%s", ip)
         return _signup_redirect("requested")
 
@@ -259,17 +272,62 @@ async def request_account(request: Request,
     except ValueError:
         return _signup_redirect("error")
 
-    # Abuse caps: bound the queue globally and to one pending request per IP.
-    if cp.db.count_pending_requests() >= settings.MAX_PENDING_REQUESTS:
+    # Abuse caps: bound the OPEN queue (unverified + pending) globally and per IP
+    # so unverified rows (each of which sends an email) can't flood or bomb.
+    if cp.db.count_open_requests() >= settings.MAX_PENDING_REQUESTS:
         logger.warning("account request queue full ip=%s", ip)
         return _signup_redirect("error")
-    if cp.db.count_pending_requests_by_ip(ip) >= settings.MAX_PENDING_PER_IP:
+    if cp.db.count_open_requests_by_ip(ip) >= settings.MAX_PENDING_PER_IP:
         return _signup_redirect("error")
+
+    if settings.email_verification_active:
+        # Prove email ownership before the request becomes reviewable. Send the
+        # link FIRST (in a thread so smtplib can't stall the event loop); only
+        # persist the 'unverified' row if the mail actually went out, so a
+        # misconfigured SMTP can't leave dangling unverifiable rows.
+        raw = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw.encode()).hexdigest()
+        expires = time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                 time.gmtime(time.time() + settings.VERIFY_TOKEN_TTL_HOURS * 3600))
+        verify_url = f"{settings.portal_url}/ck/account-requests/verify?token={raw}"
+        sent = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: notify_email_verification(
+                settings, email=email, first_name=first_name, verify_url=verify_url))
+        if not sent:
+            logger.warning("account request verify-email send failed ip=%s", ip)
+            return _signup_redirect("error")
+        cp.db.create_account_request(username, email, first_name, last_name, ip,
+                                     status="unverified", verify_token_hash=token_hash,
+                                     verify_expires_at=expires)
+        cp.db.audit(None, "account.request",
+                    f"{username} <{email}> ip={ip} (awaiting email verification)")
+        logger.info("account request awaiting verification user=%s ip=%s", username, ip)
+        return _signup_redirect("verify-sent")
 
     cp.db.create_account_request(username, email, first_name, last_name, ip)
     cp.db.audit(None, "account.request", f"{username} <{email}> ip={ip}")
     logger.info("account request queued user=%s ip=%s", username, ip)
     return _signup_redirect("requested")
+
+
+@app.get("/account-requests/verify")
+@limiter.limit(settings.SIGNUP_RATE_LIMIT)
+async def verify_account_request(request: Request, token: str = "",
+                                 cp: ControlPlane = Depends(get_cp)) -> RedirectResponse:
+    """Consume an email-verification token: promote the matching 'unverified'
+    request to 'pending' (now reviewable). Token is single-use, time-limited,
+    and only its SHA-256 is stored, so the DB never holds a live token."""
+    if not token:
+        return _signup_redirect("verify-error")
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    req = cp.db.get_unverified_request_by_token(token_hash)
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    if req is None or (req["verify_expires_at"] and now_iso > req["verify_expires_at"]):
+        return _signup_redirect("verify-error")
+    cp.db.mark_request_verified(req["id"])
+    cp.db.audit(None, "account.verify", f"req#{req['id']} {req['username']}")
+    logger.info("account request verified id=%s user=%s", req["id"], req["username"])
+    return _signup_redirect("verified")
 
 
 # ---- resources -------------------------------------------------------------
