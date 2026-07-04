@@ -29,7 +29,13 @@ def clean_username(value: str) -> str:
 
 
 def clean_email(value: str) -> str:
-    v = (value or "").strip()
+    # Lowercase the whole address. Domains are case-insensitive, and although
+    # local parts are technically case-sensitive per RFC 5321, essentially every
+    # real provider (Gmail included) treats them case-insensitively. Normalising
+    # avoids duplicate requests that differ only by case, and matches
+    # case-sensitive downstream checks like Amazon SES sandbox recipient
+    # verification (JJ@x.com != jj@x.com there).
+    v = (value or "").strip().lower()
     if len(v) > EMAIL_MAX or not EMAIL_RE.fullmatch(v):
         raise ValueError("invalid email address")
     return v
