@@ -1,14 +1,14 @@
-# CloudKeep — Golden Image build guide (minimal Ubuntu 24.04 LTS)
+# CloudCrypt — Golden Image build guide (minimal Ubuntu 24.04 LTS)
 
 Builds the **golden image** every user VM is cloned from, from a fresh minimal
 Ubuntu 24.04 LTS install. The result is small, fast-booting, secure, and tuned
-for CloudKeep's in-guest VNC model.
+for CloudCrypt's in-guest VNC model.
 
 Design choices (why it's efficient + secure):
 - **`Xvnc` is the X server.** TigerVNC renders the desktop straight to RAM — no
   display manager, no Xorg, no emulated-GPU desktop path. Leanest possible stack.
 - **XFCE core only**, compositing off — a usable desktop with minimal overhead.
-- **No SSH.** VMs are reached only through the CloudKeep portal/VNC. Admin
+- **No SSH.** VMs are reached only through the CloudCrypt portal/VNC. Admin
   diagnostics use the host-side QEMU console, never the network.
 - **Unprivileged by default.** The desktop user has **no sudo** — it cannot edit
   `/etc`, change the firewall, or stop services. Users install/remove their own
@@ -228,7 +228,7 @@ listener; safe here per §6.
 ```bash
 sudo tee /etc/systemd/system/cloudkeep-vnc.service >/dev/null <<'EOF'
 [Unit]
-Description=CloudKeep in-guest VNC desktop (TigerVNC :1)
+Description=CloudCrypt in-guest VNC desktop (TigerVNC :1)
 After=network-online.target
 Wants=network-online.target
 
@@ -306,7 +306,7 @@ sudo chmod 755 /usr/local/sbin/cloudkeep-firstboot.sh
 
 sudo tee /etc/systemd/system/cloudkeep-firstboot.service >/dev/null <<'EOF'
 [Unit]
-Description=CloudKeep first-boot customization
+Description=CloudCrypt first-boot customization
 After=network-pre.target
 Before=cloudkeep-vnc.service
 ConditionPathExists=/usr/local/sbin/cloudkeep-firstboot.sh

@@ -1,6 +1,6 @@
 # CloudKeep — landing page + gateway (hardened)
 
-# --- Default catch-all: drop any request not for cloudkeep-auth.duckdns.org ---
+# --- Default catch-all: drop any request not for cloudcrypt.online ---
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
@@ -11,7 +11,7 @@ server {
 # --- Main site ---
 server {
 
-    server_name cloudkeep-auth.duckdns.org;
+    server_name cloudcrypt.online;
 
     root  /var/www/html/cloudkeep;
     index index.html;
@@ -181,7 +181,7 @@ server {
         #   img-src blob:            — cursor images
         #   worker-src blob:         — framebuffer decoder workers
         #   connect-src wss://       — WebSocket (explicit origin avoids browser edge cases)
-        add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' wss://cloudkeep-auth.duckdns.org; worker-src blob:; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'" always;
+        add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' wss://cloudcrypt.online; worker-src blob:; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'" always;
         try_files $uri $uri/ /app/index.html;
     }
 
@@ -238,8 +238,8 @@ server {
     # these listen lines and drops `http2`, re-add it.
     listen 443 ssl http2; # managed by Certbot
     listen [::]:443 ssl http2 ipv6only=on; # managed by Certbot
-    ssl_certificate /etc/letsencrypt/live/cloudkeep-auth.duckdns.org/fullchain.pem; # managed by Certbot
-    ssl_certificate_key /etc/letsencrypt/live/cloudkeep-auth.duckdns.org/privkey.pem; # managed by Certbot
+    ssl_certificate /etc/letsencrypt/live/cloudcrypt.online/fullchain.pem; # managed by Certbot
+    ssl_certificate_key /etc/letsencrypt/live/cloudcrypt.online/privkey.pem; # managed by Certbot
 
     # TLS options inlined (was: include /etc/letsencrypt/options-ssl-nginx.conf +
     # ssl_dhparam). Those two files are only written by certbot's *nginx
@@ -259,12 +259,12 @@ server {
 }
 
 server {
-    if ($host = cloudkeep-auth.duckdns.org) {
+    if ($host = cloudcrypt.online) {
         return 301 https://$host$request_uri;
     } # managed by Certbot
 
     listen 80;
     listen [::]:80;
-    server_name cloudkeep-auth.duckdns.org;
+    server_name cloudcrypt.online;
     return 444;
 }

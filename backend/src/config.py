@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRY_MINUTES: int = 60
     WS_TOKEN_EXPIRY_SECONDS: int = 30
-    ALLOWED_ORIGIN: str = "https://cloudkeep-auth.duckdns.org"
+    ALLOWED_ORIGIN: str = "https://cloudcrypt.online"
     AUTH_RATE_LIMIT: str = "5/minute"
     PROVISION_RATE_LIMIT: str = "5/hour"
 
@@ -52,16 +52,18 @@ class Settings(BaseSettings):
     MAX_PENDING_REQUESTS: int = 10       # global cap on the pending queue
     MAX_PENDING_PER_IP: int = 1          # pending requests one IP may hold at once
 
-    # --- Email notifications (GROUNDWORK — disabled) ---
-    # Fully scaffolded but inert: with SMTP_ENABLED=false (default) notify.py only
-    # logs what it WOULD send and opens no network connection. Set SMTP_ENABLED
-    # plus the SMTP_* values in .env to turn it on later — no code change needed.
+    # --- Email notifications ---
+    # Inert until SMTP_ENABLED: with it false (default) notify.py only logs what
+    # it WOULD send and opens no connection. When on, controld hands mail to the
+    # edge relay (SMTP_HOST) which authenticates to the real provider; controld
+    # itself authenticates to nothing, so SMTP_USERNAME/PASSWORD stay empty.
     SMTP_ENABLED: bool = False
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
-    SMTP_USERNAME: str = ""
+    SMTP_USERNAME: str = ""              # empty when relaying via a trusted edge
     SMTP_PASSWORD: str = ""
-    SMTP_FROM: str = ""                  # e.g. "CloudKeep <no-reply@example.com>"
+    SMTP_FROM: str = ""                  # e.g. "CloudCrypt <no-reply@cloudcrypt.online>"
+    SMTP_REPLY_TO: str = ""             # e.g. a monitored inbox: cloudkeepmail@gmail.com
     SMTP_USE_TLS: bool = True            # STARTTLS on SMTP_PORT
     PORTAL_URL: str = ""                 # email link base; defaults to ALLOWED_ORIGIN
 

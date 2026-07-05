@@ -1,6 +1,6 @@
-# CloudKeep — User management guide (admins + end users)
+# CloudCrypt — User management guide (admins + end users)
 
-How accounts come to exist in CloudKeep, why the process is designed the way it
+How accounts come to exist in CloudCrypt, why the process is designed the way it
 is, and step-by-step instructions for both audiences:
 
 - **Admins** — create users directly, or review and approve self-service
@@ -242,7 +242,7 @@ Relevant actions: `account.request` (a public submission, with username/email/IP
 
 ### 3.1 Requesting an account
 
-1. Go to the CloudKeep site (e.g. `https://cloudkeep-auth.duckdns.org/`).
+1. Go to the CloudCrypt site (e.g. `https://cloudcrypt.online/`).
 2. Click **Request access**.
 3. Fill in the form:
    - **username** — 3–32 characters: letters, digits, `_` or `-` (it's stored
@@ -283,7 +283,7 @@ Once your administrator confirms your account is ready:
 2. Sign in with your username and the password you were given.
 3. Build a machine with **+ build**, then **Connect** when it reports **ready**.
 
-Consider changing nothing about your password storage — CloudKeep keeps your
+Consider changing nothing about your password storage — CloudCrypt keeps your
 session token in memory only, so closing the tab signs you out.
 
 ---
@@ -301,7 +301,8 @@ All optional except where noted; sane defaults shown.
 | `MAX_PENDING_PER_IP` | `1` | Open requests a single IP may hold at once. |
 | `DEFAULT_MAX_VMS` / `_VCPUS` / `_MEM_MB` / `_DISK_GB` | 2 / 4 / 8192 / 100 | Quota defaults for new users when no flag is given. |
 | `SMTP_ENABLED` | `false` | Master switch for email (verification + notifications) — see §5. |
-| `SMTP_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` / `_FROM` / `_USE_TLS` | — / 587 / — / — / — / true | SMTP relay settings, used only when `SMTP_ENABLED`. |
+| `SMTP_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` / `_FROM` / `_USE_TLS` | — / 587 / — / — / — / true | SMTP relay settings, used only when `SMTP_ENABLED`. When relaying via the edge, `HOST` is the edge tunnel IP and `USERNAME`/`PASSWORD` are empty. |
+| `SMTP_REPLY_TO` | — | Optional `Reply-To` header, so mail can be sent from a no-reply domain address while replies land in a monitored inbox. |
 | `REQUIRE_EMAIL_VERIFICATION` | `true` | Require email-ownership verification (only engages when `SMTP_ENABLED`). |
 | `VERIFY_TOKEN_TTL_HOURS` | `24` | How long a verification link stays valid. |
 | `PORTAL_URL` | *(ALLOWED_ORIGIN)* | Base URL used in email links. |
@@ -315,18 +316,32 @@ connection and just logs what it would send, and requests behave as before
 (straight to `pending`, no verification). Turn it on by setting the SMTP values
 in `.env` and restarting controld:
 
+controld can't reach the internet directly (its systemd sandbox only allows the
+tunnel + guest subnets), so it hands mail to a small relay on the **edge**, which
+authenticates to your email provider (e.g. Amazon SES). controld itself
+authenticates to nothing — `SMTP_USERNAME`/`PASSWORD` stay **empty**; the
+provider credentials live only on the edge. Send from a **DKIM-verified domain**
+(`no-reply@cloudcrypt.online`) so mail passes DMARC, and set `SMTP_REPLY_TO` to a
+monitored inbox so replies still reach you:
+
 ```bash
 SMTP_ENABLED=true
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USERNAME=apikey-or-user
-SMTP_PASSWORD=secret
-SMTP_FROM=CloudKeep <no-reply@example.com>
-SMTP_USE_TLS=true
-PORTAL_URL=https://cloudkeep-auth.duckdns.org   # link base (defaults to ALLOWED_ORIGIN)
-# REQUIRE_EMAIL_VERIFICATION=true   # default; set false to email but skip verification
-# VERIFY_TOKEN_TTL_HOURS=24         # link lifetime
+SMTP_HOST=10.10.10.1
+SMTP_PORT=25
+SMTP_USE_TLS=false
+SMTP_USERNAME=
+SMTP_PASSWORD=
+SMTP_FROM=CloudCrypt <no-reply@cloudcrypt.online>
+SMTP_REPLY_TO=cloudkeepmail@gmail.com
+PORTAL_URL=https://cloudcrypt.online
+REQUIRE_EMAIL_VERIFICATION=true
+VERIFY_TOKEN_TTL_HOURS=24
 ```
+
+> **Do not put inline `# comments` in `.env`.** python-dotenv treats a comment on
+> an empty-value line (`SMTP_USERNAME=   # note`) as the *value*, which silently
+> breaks things. Keep values bare; comment on their own lines. The edge relay
+> itself (Postfix → SES, DKIM, etc.) is its own runbook.
 
 Once enabled, two emails exist:
 

@@ -119,7 +119,7 @@ async def lifespan(app: FastAPI):
     await app.state.cp.stop()
 
 
-app = FastAPI(title="CloudKeep controld", lifespan=lifespan)
+app = FastAPI(title="CloudCrypt controld", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_middleware(
     CORSMiddleware,

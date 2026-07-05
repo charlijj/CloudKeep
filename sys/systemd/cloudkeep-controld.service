@@ -15,7 +15,7 @@
 # and .env (JWT_SECRET) at /opt/cloudkeep/backend/src/.env.
 
 [Unit]
-Description=CloudKeep control plane (controld)
+Description=CloudCrypt control plane (controld)
 Documentation=https://github.com/charlijj/CloudKeep
 # Modular libvirt daemons (CentOS/RHEL 10) + libvirtd (Debian/mono) — After of a
 # non-existent unit is a harmless no-op, so listing both families is safe.
