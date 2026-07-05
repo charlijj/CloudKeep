@@ -26,14 +26,14 @@ def notify_email_verification(settings, *, email: str, first_name: str | None,
     ttl = settings.VERIFY_TOKEN_TTL_HOURS
     body = (
         f"{greeting}\n\n"
-        "Someone (hopefully you) requested a CloudKeep account with this email "
+        "Someone (hopefully you) requested a CloudCrypt account with this email "
         "address. Confirm it by opening the link below within "
         f"{ttl} hour{'s' if ttl != 1 else ''}:\n\n"
         f"    {verify_url}\n\n"
         "Once confirmed, an administrator will review your request. If you did "
         "not request this, simply ignore this email — no account is created.\n"
     )
-    return _send(settings, to=email, subject="Confirm your CloudKeep account request",
+    return _send(settings, to=email, subject="Confirm your CloudCrypt account request",
                  body=body)
 
 
@@ -44,11 +44,11 @@ def notify_account_approved(settings, *, email: str | None, username: str,
     greeting = f"Hi {first_name}," if first_name else "Hi,"
     body = (
         f"{greeting}\n\n"
-        f"Your CloudKeep account '{username}' has been approved. "
+        f"Your CloudCrypt account '{username}' has been approved. "
         f"You can sign in at {settings.portal_url}/app/.\n\n"
         "Your administrator will share your initial password separately.\n"
     )
-    return _send(settings, to=email, subject="Your CloudKeep account is ready",
+    return _send(settings, to=email, subject="Your CloudCrypt account is ready",
                  body=body)
 
 
@@ -64,6 +64,10 @@ def _send(settings, *, to: str | None, subject: str, body: str) -> bool:
     msg["From"] = settings.SMTP_FROM or settings.SMTP_USERNAME
     msg["To"] = to
     msg["Subject"] = subject
+    # Send from the DKIM-aligned domain, but route replies to a monitored inbox
+    # (so we can keep sending as no-reply@<domain> without losing user replies).
+    if settings.SMTP_REPLY_TO:
+        msg["Reply-To"] = settings.SMTP_REPLY_TO
     msg.set_content(body)
     try:
         with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as s:

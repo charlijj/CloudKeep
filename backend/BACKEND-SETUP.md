@@ -1,4 +1,4 @@
-# CloudKeep — Backend (controld) setup guide
+# CloudCrypt — Backend (controld) setup guide
 
 How the control plane is brought up on the **KVM host**: `cloudkeep-controld` is
 a FastAPI service that authenticates users, tracks host resources, provisions
@@ -125,7 +125,7 @@ else has a sane default in `config.py`.
 ```bash
 sudo -u app tee /opt/cloudkeep/backend/src/.env >/dev/null <<EOF
 JWT_SECRET=$(openssl rand -hex 32)
-ALLOWED_ORIGIN=https://cloudkeep-auth.duckdns.org
+ALLOWED_ORIGIN=https://cloudcrypt.online
 # Bring controld up WITHOUT real KVM first (login/quotas/lifecycle all work):
 LIBVIRT_URI=fake
 EOF
@@ -133,7 +133,7 @@ chmod 600 /opt/cloudkeep/backend/src/.env
 ```
 
 > `ALLOWED_ORIGIN` **must** match the edge domain exactly, or CORS rejects the
-> browser's API calls. Default is `https://cloudkeep-auth.duckdns.org`; set it to
+> browser's API calls. Default is `https://cloudcrypt.online`; set it to
 > your real domain.
 
 ## 5. Smoke test in fake mode
@@ -187,7 +187,7 @@ Otherwise paste it (this is the same content, tailored to the `app` /
 ```bash
 sudo tee /etc/systemd/system/cloudkeep-controld.service >/dev/null <<'EOF'
 [Unit]
-Description=CloudKeep control plane (controld)
+Description=CloudCrypt control plane (controld)
 Documentation=https://github.com/charlijj/CloudKeep
 After=network-online.target wg-quick@wg0.service libvirtd.service virtqemud.service virtnetworkd.service virtstoraged.service virtnwfilterd.service
 Wants=network-online.target wg-quick@wg0.service
@@ -259,10 +259,10 @@ systemd-analyze security cloudkeep-controld.service     # expect a low (good) sc
 curl -s http://10.10.10.2:8000/health
 
 # Through the edge (from anywhere) — exercises NGINX + WireGuard + controld
-curl -s https://cloudkeep-auth.duckdns.org/ck/health
+curl -s https://cloudcrypt.online/ck/health
 ```
 
-Then sign in at `https://cloudkeep-auth.duckdns.org/app/`, build a VM, and watch
+Then sign in at `https://cloudcrypt.online/app/`, build a VM, and watch
 the card go `queued → building → ready` (the card shows the live provisioning
 *stage* as it goes). Click **Logs** on a building or running card to open the
 serial boot-log pop-up and watch the kernel/systemd stream in real time. If

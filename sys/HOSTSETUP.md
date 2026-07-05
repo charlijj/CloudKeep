@@ -1,4 +1,4 @@
-# CloudKeep v2 — KVM host setup runbook
+# CloudCrypt v2 — KVM host setup runbook
 
 Bring the KVM host up as the **control plane + compute** for the self-service
 fleet. Run blocks in order on the host unless noted. Downtime is expected and

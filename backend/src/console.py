@@ -55,7 +55,7 @@ _FAKE_LOG = [
     "[    3.402551] EXT4-fs (vda1): resized filesystem to 16777216 blocks",
     "[    4.998120] systemd[1]: Reached target Multi-User System.",
     "[    6.140882] cloudkeep-vnc.service: starting TigerVNC :1 …",
-    "[    7.770015] CloudKeep desktop ready — VNC listening on :5901",
+    "[    7.770015] CloudCrypt desktop ready — VNC listening on :5901",
 ]
 
 
@@ -79,7 +79,7 @@ async def serve_console(websocket, name: str) -> None:
                        name, _active_streams)
         with contextlib.suppress(Exception):
             await websocket.send_text(
-                "\n[CloudKeep] Too many console streams open right now — "
+                "\n[CloudCrypt] Too many console streams open right now — "
                 "close another Logs panel and try again.\n")
             await websocket.close()
         return

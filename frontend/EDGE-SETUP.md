@@ -1,4 +1,4 @@
-# CloudKeep — Edge (AWS NGINX) setup guide
+# CloudCrypt — Edge (AWS NGINX) setup guide
 
 How the public-facing edge is built: an Ubuntu EC2 instance running NGINX that
 terminates TLS, serves the SPA, and reverse-proxies `/ck/*` over a WireGuard
@@ -21,7 +21,7 @@ Already done on the new instance:
 You'll also need:
 - The **KVM host's WireGuard public key** (`host.pub` from `sys/HOSTSETUP.md` §3).
 - `certbot`: `sudo apt update && sudo apt install -y certbot`
-- DNS: `cloudkeep-auth.duckdns.org` pointing at this instance's public IP (§2).
+- DNS: `cloudcrypt.online` pointing at this instance's public IP (§2).
 
 > **Use an Elastic IP.** A plain EC2 public IP changes on stop/start, which
 > breaks both DNS and the WireGuard endpoint the host dials. Allocate + associate
@@ -41,14 +41,23 @@ On the instance's security group, allow **inbound**:
 Outbound: default allow. (Optionally mirror this with `ufw` on the instance, but
 the security group is the authoritative control.)
 
-## 2. DNS — point DuckDNS at this instance
+## 2. DNS — point the domain at this instance (Namecheap)
 
-Set `cloudkeep` to the Elastic IP (DuckDNS dashboard, or):
+In the Namecheap dashboard for `cloudcrypt.online` → **Advanced DNS → Host
+Records**, remove any placeholder "URL Redirect Record" and add an **A record**
+pointing the apex at the edge's Elastic IP:
+
+| Type | Host | Value | TTL |
+|---|---|---|---|
+| A | `@` | `<ELASTIC_IP>` | Automatic |
+| A (optional) | `www` | `<ELASTIC_IP>` | Automatic |
+
+If you send email from this domain via Amazon SES, also add the **DKIM CNAMEs**
+(and any MAIL FROM / DMARC records) that the SES console gives you here — owning
+the DNS is the whole reason to use a real domain. Then verify propagation:
 
 ```bash
-curl "https://www.duckdns.org/update?domains=cloudkeep&token=<YOUR_DUCKDNS_TOKEN>&ip=<ELASTIC_IP>"
-# verify:
-dig +short cloudkeep-auth.duckdns.org      # should print the Elastic IP
+dig +short cloudcrypt.online      # should print the Elastic IP
 ```
 
 ## 3. WireGuard — edge side
@@ -128,7 +137,7 @@ sudo tee /etc/nginx/sites-available/cloudkeep >/dev/null <<'EOF'
 server {
     listen 80;
     listen [::]:80;
-    server_name cloudkeep-auth.duckdns.org;
+    server_name cloudcrypt.online;
     root /var/www/html/cloudkeep;
     location /.well-known/acme-challenge/ { allow all; }
     location / { return 200 'bootstrap'; }
@@ -140,7 +149,7 @@ sudo nginx -t && sudo systemctl reload nginx
 
 # 6b. Issue the cert via webroot (no nginx downtime)
 sudo certbot certonly --webroot -w /var/www/html/cloudkeep \
-     -d cloudkeep-auth.duckdns.org --agree-tos -m <your-email> --no-eff-email
+     -d cloudcrypt.online --agree-tos -m <your-email> --no-eff-email
 
 # 6c. Confirm renewal works end-to-end
 sudo certbot renew --dry-run
@@ -154,7 +163,7 @@ config keeps `/.well-known/` reachable on port 80 so renewals succeed.
 Replace the bootstrap with the full config below, then reload.
 
 > **Your domain appears in 4 places — keep them identical** (the examples use
-> `cloudkeep-auth.duckdns.org`; replace with yours if different):
+> `cloudcrypt.online`; replace with yours if different):
 > 1. HTTP redirect server → `server_name`
 > 2. HTTPS server → `server_name`
 > 3. HTTPS server → `ssl_certificate` + `ssl_certificate_key` (`live/<domain>/…`)
@@ -168,7 +177,7 @@ Replace the bootstrap with the full config below, then reload.
 
 ```bash
 sudo tee /etc/nginx/sites-available/cloudkeep >/dev/null <<'EOF'
-# CloudKeep edge — TLS terminator + static SPA + /ck reverse proxy.
+# CloudCrypt edge — TLS terminator + static SPA + /ck reverse proxy.
 
 # Drop any request that isn't for our hostname.
 server {
@@ -182,7 +191,7 @@ server {
 server {
     listen 80;
     listen [::]:80;
-    server_name cloudkeep-auth.duckdns.org;
+    server_name cloudcrypt.online;
     root /var/www/html/cloudkeep;
     location /.well-known/acme-challenge/ { allow all; }   # cert renewal
     location / { return 301 https://$host$request_uri; }
@@ -192,13 +201,13 @@ server {
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name cloudkeep-auth.duckdns.org;
+    server_name cloudcrypt.online;
 
     root  /var/www/html/cloudkeep;
     index index.html;
 
-    ssl_certificate     /etc/letsencrypt/live/cloudkeep-auth.duckdns.org/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/cloudkeep-auth.duckdns.org/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/cloudcrypt.online/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/cloudcrypt.online/privkey.pem;
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
     ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
@@ -314,7 +323,7 @@ server {
         add_header Cross-Origin-Opener-Policy   "same-origin" always;
         add_header Cross-Origin-Resource-Policy "same-origin" always;
         add_header Strict-Transport-Security    "max-age=31536000" always;
-        add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' wss://cloudkeep-auth.duckdns.org; worker-src blob:; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'" always;
+        add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' wss://cloudcrypt.online; worker-src blob:; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'" always;
         try_files $uri $uri/ /app/index.html;
     }
 
@@ -360,14 +369,14 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ```bash
 # TLS + HTTP/2 + redirect
-curl -sI http://cloudkeep-auth.duckdns.org   | grep -i location      # -> https://...
-curl -sI --http2 https://cloudkeep-auth.duckdns.org/app/ | grep -i '^HTTP'   # -> HTTP/2 200
+curl -sI http://cloudcrypt.online   | grep -i location      # -> https://...
+curl -sI --http2 https://cloudcrypt.online/app/ | grep -i '^HTTP'   # -> HTTP/2 200
 
 # End-to-end through the tunnel to controld
-curl -s https://cloudkeep-auth.duckdns.org/ck/health                 # {"status":"ok",...}
+curl -s https://cloudcrypt.online/ck/health                 # {"status":"ok",...}
 ```
 
-Then open `https://cloudkeep-auth.duckdns.org/app/` and sign in. A cold load should
+Then open `https://cloudcrypt.online/app/` and sign in. A cold load should
 pull a single `novnc.bundle.js` (no request storm) and show no console errors.
 
 > Full end-to-end use also requires `controld` running on the KVM host and the

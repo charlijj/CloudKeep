@@ -1,8 +1,8 @@
-# CloudKeep
+# CloudCrypt
 
 **A self-service private cloud: build and use browser-based virtual desktops.**
 
-CloudKeep lets authenticated users provision their own KVM virtual machines from
+CloudCrypt lets authenticated users provision their own KVM virtual machines from
 a web portal — choosing cores, memory, and disk within a per-user quota — and
 connect to each VM's desktop in the browser over noVNC. A public AWS EC2 instance
 is the internet-facing edge; the on-prem **KVM host** is the control plane *and*

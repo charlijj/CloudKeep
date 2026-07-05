@@ -13,7 +13,7 @@
 # tweaks). 'app' is the desktop user.
 
 [Unit]
-Description=CloudKeep in-guest VNC desktop (TigerVNC :1)
+Description=CloudCrypt in-guest VNC desktop (TigerVNC :1)
 After=network-online.target
 Wants=network-online.target
 
